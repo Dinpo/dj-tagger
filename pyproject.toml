@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "djtagger"
+version = "4.0.0"
+description = "Autonomous DJ music tagger — Essentia ML + Beatport + Last.fm"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Dino Patti"}]
+
+dependencies = [
+    "essentia-tensorflow",
+    "mutagen",
+    "numpy",
+    "requests",
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[project.scripts]
+djtagger = "djtagger.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["djtagger*"]
