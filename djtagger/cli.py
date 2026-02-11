@@ -224,12 +224,27 @@ def tag(
     _log_fh = open(LOG_FILE, "w")
     _err_fh = open(ERROR_FILE, "w")
 
+    try:
+        _tag_inner(path, dry_run, force, no_beatport, fix_comments)
+    finally:
+        _cleanup()
+
+
+def _tag_inner(
+    path: str,
+    dry_run: bool,
+    force: bool,
+    no_beatport: bool,
+    fix_comments: bool,
+) -> None:
+    """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
     from .analyzer import analyze_track, load_models
     from .genres import resolve_genres
     from .scanner import filter_untagged, find_mp3s
     from .tagger import fix_comments as do_fix_comments
     from .tagger import parse_filename, write_tags
+    from rich.console import Group
 
     # ─── Fix-comments mode ──────────────────────────────────
     if fix_comments:
@@ -258,7 +273,6 @@ def tag(
             f"\n[bold green]✅ Done![/bold green] Fixed [bold]{fixed}[/bold] comments, "
             f"skipped [dim]{len(all_mp3s) - fixed}[/dim] untagged files"
         )
-        _cleanup()
         return
 
     # ─── Scan ───────────────────────────────────────────────
@@ -283,7 +297,6 @@ def tag(
     if not mp3s:
         console.print("\n[bold green]Nothing to do![/bold green] All files already tagged. ✨")
         _update_status(state="done", total=total_files, skipped=total_files, processed=0)
-        _cleanup()
         return
 
     # ─── Load models ────────────────────────────────────────
@@ -360,7 +373,6 @@ def tag(
                 current_track=track_label,
                 current_folder=folder,
             )
-            from rich.console import Group
             live.update(Group(progress, panel))
 
             _log(f"[{i}/{len(mp3s)}] ({folder}) 🎵 {artist} — {title}")
@@ -457,8 +469,6 @@ def tag(
         finished=time.strftime("%Y-%m-%d %H:%M:%S"),
         elapsed_hours=round(elapsed_total, 2),
     )
-
-    _cleanup()
 
 
 # ═════════════════════════════════════════════════════════════

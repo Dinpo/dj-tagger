@@ -11,6 +11,8 @@ import numpy as np
 
 from .config import MODEL_DIR, GENRE_MIN_PROB
 
+_GENRE_LABELS_CACHE = os.path.join(MODEL_DIR, "genre_discogs400_labels.json")
+
 # ─── Suppress TF / Essentia warning spam ────────────────────
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -31,13 +33,41 @@ _genre_labels: list[str] | None = None
 
 def get_genre_labels() -> list[str]:
     global _genre_labels
-    if _genre_labels is None:
-        url = (
-            "https://essentia.upf.edu/models/classification-heads/"
-            "genre_discogs400/genre_discogs400-discogs-effnet-1.json"
-        )
-        with urllib.request.urlopen(url) as resp:
+    if _genre_labels is not None:
+        return _genre_labels
+
+    # Try local cache first
+    if os.path.isfile(_GENRE_LABELS_CACHE):
+        try:
+            with open(_GENRE_LABELS_CACHE) as f:
+                _genre_labels = json.load(f)
+            return _genre_labels
+        except Exception:
+            pass
+
+    # Fetch from network with timeout
+    url = (
+        "https://essentia.upf.edu/models/classification-heads/"
+        "genre_discogs400/genre_discogs400-discogs-effnet-1.json"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
             _genre_labels = json.loads(resp.read())["classes"]
+    except Exception as ex:
+        raise RuntimeError(
+            f"Cannot load genre labels: network fetch failed ({ex}) "
+            f"and no local cache at {_GENRE_LABELS_CACHE}. "
+            f"Run once with network access to cache the labels."
+        ) from ex
+
+    # Cache locally for offline use
+    try:
+        os.makedirs(os.path.dirname(_GENRE_LABELS_CACHE), exist_ok=True)
+        with open(_GENRE_LABELS_CACHE, "w") as f:
+            json.dump(_genre_labels, f)
+    except Exception:
+        pass
+
     return _genre_labels
 
 

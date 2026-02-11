@@ -18,7 +18,7 @@ ERROR_FILE = "/tmp/dj-tagger-errors.log"
 # ─── API Keys ───────────────────────────────────────────────
 
 LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY", "")
-LASTFM_URL = "http://ws.audioscrobbler.com/2.0/"
+LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────
 

@@ -15,7 +15,6 @@ dependencies = [
     "essentia-tensorflow",
     "mutagen",
     "numpy",
-    "requests",
     "typer>=0.9",
     "rich>=13.0",
 ]

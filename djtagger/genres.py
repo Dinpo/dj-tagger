@@ -3,8 +3,9 @@
 import json
 import re
 import subprocess
-
-import requests as _requests  # only for requests.utils.quote
+import sys
+from collections import OrderedDict
+from urllib.parse import quote as _url_quote
 
 from .config import (
     BEATPORT_TIMEOUT,
@@ -14,9 +15,27 @@ from .config import (
     LASTFM_MIN_COUNT,
 )
 
-# ─── Beatport cache ─────────────────────────────────────────
+# ─── Beatport cache (bounded LRU) ───────────────────────────
 
-_beatport_cache: dict[str, list[str]] = {}
+_BEATPORT_CACHE_MAX = 500
+
+
+class _BoundedCache(OrderedDict):
+    """Simple bounded LRU cache using OrderedDict."""
+
+    def __setitem__(self, key: str, value: list[str]) -> None:
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        if len(self) > _BEATPORT_CACHE_MAX:
+            self.popitem(last=False)
+
+
+_beatport_cache: _BoundedCache = _BoundedCache()
+
+# ─── Last.fm API key warning (shown once) ────────────────────
+
+_lastfm_warned = False
 
 # ─── Mix / Remix helpers ────────────────────────────────────
 
@@ -155,7 +174,7 @@ def get_beatport_genre(artist: str, title: str) -> list[str]:
 
     genres: list[str] = []
     try:
-        url = f"https://www.beatport.com/search/tracks?q={_requests.utils.quote(query)}"
+        url = f"https://www.beatport.com/search/tracks?q={_url_quote(query)}"
         result = subprocess.run(
             ["curl", "-s", "-m", str(BEATPORT_TIMEOUT), "-A", "Mozilla/5.0", url],
             capture_output=True,
@@ -175,9 +194,20 @@ def get_beatport_genre(artist: str, title: str) -> list[str]:
             return []
 
         data = json.loads(match.group(1))
-        items = data["props"]["pageProps"]["dehydratedState"]["queries"][0]["state"][
-            "data"
-        ]["data"]
+        # Guard against Beatport page structure changes
+        try:
+            items = (
+                data["props"]["pageProps"]["dehydratedState"]
+                ["queries"][0]["state"]["data"]["data"]
+            )
+        except (KeyError, IndexError, TypeError):
+            print(
+                "[djtagger] Warning: Beatport page structure changed — "
+                "scraping may be broken. Falling back to other sources.",
+                file=sys.stderr,
+            )
+            _beatport_cache[cache_key] = []
+            return []
         if not items:
             _beatport_cache[cache_key] = []
             return []
@@ -224,6 +254,17 @@ def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
     Tries cleaned artist name first, then raw.
     Returns up to 3 genre names.
     """
+    global _lastfm_warned
+    if not LASTFM_API_KEY:
+        if not _lastfm_warned:
+            print(
+                "[djtagger] Warning: LASTFM_API_KEY not set — "
+                "Last.fm lookups disabled. Set the env var for better genre results.",
+                file=sys.stderr,
+            )
+            _lastfm_warned = True
+        return []
+
     genres: list[str] = []
     for art in [artist_clean, artist]:
         if not art:
@@ -231,7 +272,7 @@ def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
         try:
             url = (
                 f"{LASTFM_URL}?method=artist.getTopTags"
-                f"&artist={_requests.utils.quote(art)}"
+                f"&artist={_url_quote(art)}"
                 f"&api_key={LASTFM_API_KEY}&format=json"
             )
             result = subprocess.run(
