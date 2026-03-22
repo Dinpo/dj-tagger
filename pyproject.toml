@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "djtagger"
-version = "4.0.0"
+version = "5.0.0"
 description = "Autonomous DJ music tagger — Essentia ML + Beatport + Last.fm"
 readme = "README.md"
 requires-python = ">=3.10"

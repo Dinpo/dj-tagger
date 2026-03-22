@@ -307,6 +307,7 @@ def resolve_genres(
     artist_clean: str,
     title: str,
     ml_genres: list[tuple[str, float]],
+    ml_electronic_genres: list[tuple[str, float]] | None = None,
     use_beatport: bool = True,
     genre_keep_prob: float = 0.10,
 ) -> tuple[list[str], str]:
@@ -319,6 +320,13 @@ def resolve_genres(
     )
     fm_genres = get_lastfm_genre(artist, artist_clean, title)
     ml_list = [g[0] for g in ml_genres[:3] if g[1] >= genre_keep_prob]
+
+    # Prefer electronic sub-genre labels when confident
+    if ml_electronic_genres:
+        elec_list = [g[0] for g in ml_electronic_genres[:3] if g[1] >= genre_keep_prob]
+        if elec_list and ml_electronic_genres[0][1] > 0.20:
+            ml_list = elec_list + [g for g in ml_list if g.lower() not in
+                                   [e.lower() for e in elec_list]]
 
     if bp_genres:
         return bp_genres, "beatport"

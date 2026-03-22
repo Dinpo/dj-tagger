@@ -394,6 +394,7 @@ def _tag_inner(
                     artist_clean,
                     title,
                     result["genres"],
+                    ml_electronic_genres=result.get("electronic_genres"),
                     use_beatport=not no_beatport,
                     genre_keep_prob=GENRE_KEEP_PROB,
                 )
@@ -525,6 +526,27 @@ def info(
         table.add_row("Valence", f"{v_bar}  {v:.3f}")
     table.add_row("", "")
 
+    # v5 scores
+    if tags.get("danceability"):
+        d = float(tags["danceability"])
+        table.add_row("Danceability", f"{_mini_bar(d)}  {d:.3f}")
+    if tags.get("arousal"):
+        a = float(tags["arousal"])
+        table.add_row("Arousal", f"{_mini_bar(a)}  {a:.3f}")
+    if tags.get("mood_party"):
+        p = float(tags["mood_party"])
+        table.add_row("Party", f"{_mini_bar(p)}  {p:.3f}")
+    table.add_row("", "")
+
+    # Segment energy
+    if tags.get("peak_energy"):
+        pe = float(tags["peak_energy"])
+        table.add_row("Peak energy", f"{_mini_bar(pe)}  {pe:.3f}")
+    if tags.get("intro_energy"):
+        ie = float(tags["intro_energy"])
+        table.add_row("Intro energy", f"{_mini_bar(ie)}  {ie:.3f}")
+    table.add_row("", "")
+
     # Moods
     for mood_key, label in [
         ("mood_happy", "😊 Happy"),
@@ -574,11 +596,10 @@ def stats(
         help="Folder to analyze",
     ),
 ) -> None:
-    """Show library statistics — tagged count, genre distribution, etc."""
-    from collections import Counter
+    """Show library statistics — tagged count, genre distribution, energy histograms, etc."""
+    from collections import Counter, defaultdict
 
-    from .scanner import find_mp3s
-    from .tagger import read_tags
+    from .library import scan_library
 
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
@@ -586,21 +607,6 @@ def stats(
 
     console.print(f"\n[bold cyan]📊 Library Statistics[/bold cyan]")
     console.print(f"[dim]{path}[/dim]\n")
-
-    with console.status("[bold cyan]Scanning…[/bold cyan]", spinner="dots"):
-        all_mp3s = find_mp3s(path)
-
-    if not all_mp3s:
-        console.print("[yellow]No MP3 files found.[/yellow]")
-        return
-
-    tagged = 0
-    untagged = 0
-    genre_counter: Counter = Counter()
-    source_counter: Counter = Counter()
-    energies: list[float] = []
-    valences: list[float] = []
-    versions: Counter = Counter()
 
     with Progress(
         SpinnerColumn(),
@@ -610,40 +616,59 @@ def stats(
         console=console,
         transient=True,
     ) as progress:
-        task = progress.add_task("Reading tags", total=len(all_mp3s))
-        for mp3 in all_mp3s:
-            tags = read_tags(mp3)
-            if tags.get("tagger_version"):
-                tagged += 1
-                # Genre
-                genre = tags.get("genre", "")
-                if genre:
-                    for g in genre.split(";"):
-                        g = g.strip()
-                        if g:
-                            genre_counter[g] += 1
-                # Source
-                src = tags.get("genre_source", "unknown")
-                source_counter[src] += 1
-                # Energy/valence
-                if tags.get("energy"):
-                    energies.append(float(tags["energy"]))
-                if tags.get("valence"):
-                    valences.append(float(tags["valence"]))
-                # Version
-                versions[tags.get("tagger_version", "?")] += 1
-            else:
-                untagged += 1
-            progress.advance(task)
+        task = progress.add_task("Reading tags", total=0)
+
+        def on_progress(current: int, total: int) -> None:
+            progress.update(task, completed=current, total=total)
+
+        tracks = scan_library(path, on_progress=on_progress)
+
+    if not tracks:
+        console.print("[yellow]No MP3 files found.[/yellow]")
+        return
+
+    tagged_tracks = [t for t in tracks if t["tagged"]]
+    untagged_count = len(tracks) - len(tagged_tracks)
+
+    genre_counter: Counter = Counter()
+    source_counter: Counter = Counter()
+    energies: list[float] = []
+    valences: list[float] = []
+    danceabilities: list[float] = []
+    versions: Counter = Counter()
+    # For genre×energy breakdown
+    genre_energies: defaultdict[str, list[float]] = defaultdict(list)
+
+    for t in tagged_tracks:
+        genre = t["genre"]
+        if genre:
+            primary_genre = genre.split(";")[0].strip()
+            for g in genre.split(";"):
+                g = g.strip()
+                if g:
+                    genre_counter[g] += 1
+            if t["energy"] is not None and primary_genre:
+                genre_energies[primary_genre].append(t["energy"])
+        source_counter[t["genre_source"] or "unknown"] += 1
+        if t["energy"] is not None:
+            energies.append(t["energy"])
+        if t["valence"] is not None:
+            valences.append(t["valence"])
+        if t["danceability"] is not None:
+            danceabilities.append(t["danceability"])
+        versions[t["tagger_version"] or "?"] += 1
 
     # ─── Overview table ─────────────────────────────────────
     overview = Table(box=box.ROUNDED, border_style="dim", title="Overview", title_style="bold")
     overview.add_column("Metric", style="bold")
     overview.add_column("Value", justify="right")
-    overview.add_row("Total files", str(len(all_mp3s)))
-    overview.add_row("Tagged", f"[green]{tagged}[/green]")
-    overview.add_row("Untagged", f"[yellow]{untagged}[/yellow]" if untagged else "[dim]0[/dim]")
-    pct = (tagged / len(all_mp3s) * 100) if all_mp3s else 0
+    overview.add_row("Total files", str(len(tracks)))
+    overview.add_row("Tagged", f"[green]{len(tagged_tracks)}[/green]")
+    overview.add_row(
+        "Untagged",
+        f"[yellow]{untagged_count}[/yellow]" if untagged_count else "[dim]0[/dim]",
+    )
+    pct = (len(tagged_tracks) / len(tracks) * 100) if tracks else 0
     overview.add_row("Coverage", f"{pct:.1f}%")
     console.print(overview)
     console.print()
@@ -676,7 +701,7 @@ def stats(
         console.print(genre_table)
         console.print()
 
-    # ─── Energy / Valence ───────────────────────────────────
+    # ─── Energy / Valence summary ───────────────────────────
     if energies:
         import numpy as np
 
@@ -700,6 +725,53 @@ def stats(
         console.print(ev_table)
         console.print()
 
+    # ─── Energy distribution histogram ──────────────────────
+    if energies:
+        _print_histogram("Energy Distribution", energies, "red", "yellow", "green")
+        console.print()
+
+    # ─── Valence distribution histogram ─────────────────────
+    if valences:
+        _print_histogram("Valence Distribution", valences, "blue", "white", "yellow")
+        console.print()
+
+    # ─── Danceability distribution histogram ─────────────────
+    if danceabilities:
+        _print_histogram("Danceability Distribution", danceabilities, "dim", "cyan", "magenta")
+        console.print()
+
+    # ─── Genre × Energy breakdown ───────────────────────────
+    if genre_energies:
+        import numpy as np
+
+        ge_table = Table(
+            box=box.ROUNDED, border_style="dim",
+            title="Genre Energy Profile (top 15)", title_style="bold",
+        )
+        ge_table.add_column("Genre", style="bold")
+        ge_table.add_column("Tracks", justify="right")
+        ge_table.add_column("Low", justify="right", style="cyan")
+        ge_table.add_column("Mid", justify="right", style="yellow")
+        ge_table.add_column("High", justify="right", style="red")
+        ge_table.add_column("Avg", justify="right")
+        ge_table.add_column("Profile")
+
+        # Sort by track count
+        sorted_genres = sorted(genre_energies.items(), key=lambda x: -len(x[1]))[:15]
+        for genre, e_list in sorted_genres:
+            low = sum(1 for e in e_list if e < 0.4)
+            mid = sum(1 for e in e_list if 0.4 <= e < 0.7)
+            high = sum(1 for e in e_list if e >= 0.7)
+            avg = np.mean(e_list)
+            bar = _bar(avg, "cyan", "yellow", "red")
+            ge_table.add_row(
+                genre[:25], str(len(e_list)),
+                str(low), str(mid), str(high),
+                f"{avg:.2f}", bar,
+            )
+        console.print(ge_table)
+        console.print()
+
     # ─── Tagger versions ───────────────────────────────────
     if versions:
         ver_table = Table(box=box.SIMPLE, border_style="dim")
@@ -710,6 +782,712 @@ def stats(
         console.print(ver_table)
 
     console.print()
+
+
+def _print_histogram(
+    title: str,
+    values: list[float],
+    low_color: str,
+    mid_color: str,
+    high_color: str,
+) -> None:
+    """Print a 5-bucket histogram for values in 0-1 range."""
+    buckets = [0] * 5
+    labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
+    colors = [low_color, low_color, mid_color, high_color, high_color]
+    for v in values:
+        idx = min(int(v * 5), 4)
+        buckets[idx] += 1
+
+    max_count = max(buckets) if buckets else 1
+    table = Table(
+        box=box.ROUNDED, border_style="dim",
+        title=title, title_style="bold",
+    )
+    table.add_column("Range", style="bold")
+    table.add_column("Count", justify="right")
+    table.add_column("Distribution")
+    for i, (label, count) in enumerate(zip(labels, buckets)):
+        bar_len = int(count / max_count * 30) if max_count else 0
+        color = colors[i]
+        table.add_row(label, str(count), f"[{color}]{'█' * bar_len}[/{color}]")
+    console.print(table)
+
+
+# ═════════════════════════════════════════════════════════════
+#  Shared helpers for new commands
+# ═════════════════════════════════════════════════════════════
+
+
+def _parse_range(value: str) -> tuple[float | None, float | None]:
+    """Parse a 'MIN:MAX' range string. Either side can be empty.
+
+    Examples: '0.5:0.8' -> (0.5, 0.8), '0.5:' -> (0.5, None), ':0.8' -> (None, 0.8)
+    """
+    if ":" not in value:
+        # Treat as exact min
+        v = float(value)
+        return v, v
+    parts = value.split(":", 1)
+    lo = float(parts[0]) if parts[0].strip() else None
+    hi = float(parts[1]) if parts[1].strip() else None
+    return lo, hi
+
+
+def _in_range(value: float | None, lo: float | None, hi: float | None) -> bool:
+    """Check if value falls within [lo, hi]. None on either side means unbounded."""
+    if value is None:
+        return False
+    if lo is not None and value < lo:
+        return False
+    if hi is not None and value > hi:
+        return False
+    return True
+
+
+def _scan_with_progress(path: str) -> list[dict]:
+    """Scan a library with a Rich progress bar. Shared by find/export/suggest/health."""
+    from .library import scan_library
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Scanning library", total=0)
+
+        def on_progress(current: int, total: int) -> None:
+            progress.update(task, completed=current, total=total)
+
+        return scan_library(path, on_progress=on_progress)
+
+
+# ═════════════════════════════════════════════════════════════
+#  FIND command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def find(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to search (recursive)",
+    ),
+    genre: Optional[str] = typer.Option(None, "--genre", "-g", help="Filter by genre (case-insensitive substring)"),
+    energy: Optional[str] = typer.Option(None, "--energy", "-e", help="Energy range, e.g. 0.7:1.0 or 0.5:"),
+    valence: Optional[str] = typer.Option(None, "--valence", help="Valence range, e.g. 0.3:0.6"),
+    mood_happy: Optional[str] = typer.Option(None, "--mood-happy", help="Happy score range"),
+    mood_sad: Optional[str] = typer.Option(None, "--mood-sad", help="Sad score range"),
+    mood_aggressive: Optional[str] = typer.Option(None, "--mood-aggressive", help="Aggressive score range"),
+    mood_relaxed: Optional[str] = typer.Option(None, "--mood-relaxed", help="Relaxed score range"),
+    danceability: Optional[str] = typer.Option(None, "--danceability", "-d", help="Danceability range, e.g. 0.7:"),
+    peak_energy: Optional[str] = typer.Option(None, "--peak-energy", help="Peak energy range"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Filter by genre source (beatport, lastfm+ml, ml)"),
+    untagged: bool = typer.Option(False, "--untagged", help="Show only untagged tracks"),
+    sort: str = typer.Option("energy", "--sort", help="Sort by: energy, valence, genre, artist, title, path"),
+    reverse: bool = typer.Option(False, "--reverse", "-r", help="Reverse sort order"),
+    limit: int = typer.Option(50, "--limit", "-n", help="Max results to show (0 = all)"),
+) -> None:
+    """Search and filter your tagged library."""
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    tracks = _scan_with_progress(path)
+    if not tracks:
+        console.print("[yellow]No MP3 files found.[/yellow]")
+        return
+
+    # Parse range filters
+    ranges: dict[str, tuple[float | None, float | None]] = {}
+    for opt_name, opt_val, field in [
+        ("energy", energy, "energy"),
+        ("valence", valence, "valence"),
+        ("mood-happy", mood_happy, "mood_happy"),
+        ("mood-sad", mood_sad, "mood_sad"),
+        ("mood-aggressive", mood_aggressive, "mood_aggressive"),
+        ("mood-relaxed", mood_relaxed, "mood_relaxed"),
+        ("danceability", danceability, "danceability"),
+        ("peak-energy", peak_energy, "peak_energy"),
+    ]:
+        if opt_val is not None:
+            try:
+                ranges[field] = _parse_range(opt_val)
+            except ValueError:
+                console.print(f"[bold red]Error:[/bold red] Invalid range for --{opt_name}: {opt_val}")
+                raise typer.Exit(1)
+
+    # Filter
+    results: list[dict] = []
+    for t in tracks:
+        if untagged:
+            if t["tagged"]:
+                continue
+        else:
+            if not t["tagged"]:
+                continue
+
+        if genre and genre.lower() not in (t["genre"] or "").lower():
+            continue
+        if source and t["genre_source"] != source:
+            continue
+        # Range filters
+        skip = False
+        for field, (lo, hi) in ranges.items():
+            if not _in_range(t[field], lo, hi):
+                skip = True
+                break
+        if skip:
+            continue
+
+        results.append(t)
+
+    if not results:
+        console.print("[yellow]No tracks match your filters.[/yellow]")
+        return
+
+    # Sort
+    sort_key_map = {
+        "energy": lambda t: t["energy"] if t["energy"] is not None else -1,
+        "valence": lambda t: t["valence"] if t["valence"] is not None else -1,
+        "danceability": lambda t: t["danceability"] if t["danceability"] is not None else -1,
+        "genre": lambda t: (t["genre"] or "").lower(),
+        "artist": lambda t: (t["artist"] or "").lower(),
+        "title": lambda t: (t["title"] or "").lower(),
+        "path": lambda t: t["path"].lower(),
+    }
+    key_fn = sort_key_map.get(sort, sort_key_map["energy"])
+    # Default: energy descending, others ascending
+    default_reverse = sort in ("energy", "valence", "danceability")
+    actual_reverse = default_reverse if not reverse else not default_reverse
+    results.sort(key=key_fn, reverse=actual_reverse)
+
+    if limit > 0:
+        results = results[:limit]
+
+    # Display
+    total_matched = len(results)
+    console.print(f"\n[bold cyan]🔍 Found {total_matched} tracks[/bold cyan]\n")
+
+    table = Table(box=box.SIMPLE_HEAVY, border_style="dim", padding=(0, 1))
+    table.add_column("#", style="dim", justify="right")
+    table.add_column("Artist", style="bold", max_width=25, no_wrap=True)
+    table.add_column("Title", max_width=35, no_wrap=True)
+    table.add_column("Genre", max_width=20, no_wrap=True)
+    table.add_column("Src", justify="center")
+    table.add_column("Energy", justify="right")
+    table.add_column("Valence", justify="right")
+
+    for i, t in enumerate(results, 1):
+        src_icon = SOURCE_ICONS.get(t["genre_source"], "") if t["tagged"] else ""
+        e_str = f"{t['energy']:.2f}" if t["energy"] is not None else "[dim]—[/dim]"
+        v_str = f"{t['valence']:.2f}" if t["valence"] is not None else "[dim]—[/dim]"
+        primary_genre = t["genre"].split(";")[0].strip() if t["genre"] else ""
+        table.add_row(
+            str(i),
+            t["artist"] or "[dim]—[/dim]",
+            t["title"],
+            primary_genre or "[dim]—[/dim]",
+            src_icon,
+            e_str,
+            v_str,
+        )
+
+    console.print(table)
+    console.print()
+
+
+# ═════════════════════════════════════════════════════════════
+#  EXPORT command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def export(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to export (recursive)",
+    ),
+    fmt: str = typer.Option("csv", "--format", "-f", help="Output format: csv or json"),
+) -> None:
+    """Export library data to CSV or JSON (writes to stdout)."""
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found", err=True)
+        raise typer.Exit(1)
+
+    # Scan with progress on stderr so stdout stays clean for data
+    err_console = Console(stderr=True)
+    from .library import scan_library
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=err_console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Scanning library", total=0)
+
+        def on_progress(current: int, total: int) -> None:
+            progress.update(task, completed=current, total=total)
+
+        tracks = scan_library(path, on_progress=on_progress)
+
+    if not tracks:
+        err_console.print("[yellow]No MP3 files found.[/yellow]")
+        return
+
+    fields = [
+        "path", "artist", "title", "folder", "genre", "genre_source",
+        "genre_detected", "energy", "valence", "danceability", "arousal",
+        "mood_happy", "mood_sad", "mood_aggressive", "mood_relaxed",
+        "mood_party", "peak_energy", "intro_energy", "energy_variance",
+        "tagger_version", "comment",
+    ]
+
+    if fmt == "json":
+        export_data = []
+        for t in tracks:
+            row = {f: t.get(f) for f in fields}
+            row["tagged"] = t["tagged"]
+            export_data.append(row)
+        sys.stdout.write(json.dumps(export_data, indent=2, default=str) + "\n")
+    else:
+        import csv
+        import io
+
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fields + ["tagged"], extrasaction="ignore")
+        writer.writeheader()
+        for t in tracks:
+            row = {f: t.get(f, "") for f in fields}
+            row["tagged"] = t["tagged"]
+            # Convert None to empty string
+            for k, v in row.items():
+                if v is None:
+                    row[k] = ""
+            writer.writerow(row)
+        sys.stdout.write(output.getvalue())
+
+    err_console.print(f"[bold green]Exported {len(tracks)} tracks as {fmt.upper()}[/bold green]")
+
+
+# ═════════════════════════════════════════════════════════════
+#  SUGGEST command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def suggest(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to search for suggestions",
+    ),
+    like: Optional[str] = typer.Option(None, "--like", "-l", help="Path to a reference track"),
+    genre: Optional[str] = typer.Option(None, "--genre", "-g", help="Filter by genre"),
+    energy_curve: Optional[str] = typer.Option(
+        None, "--energy-curve", "-c",
+        help="Energy progression: rising, falling, or steady",
+    ),
+    count: int = typer.Option(15, "--count", "-n", help="Number of suggestions"),
+) -> None:
+    """Suggest tracks for set building — find similar tracks or build energy curves."""
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    if like and not os.path.isfile(like):
+        console.print(f"[bold red]Error:[/bold red] {like} not found")
+        raise typer.Exit(1)
+
+    tracks = _scan_with_progress(path)
+    tagged = [t for t in tracks if t["tagged"] and t["energy"] is not None]
+
+    if not tagged:
+        console.print("[yellow]No tagged tracks found.[/yellow]")
+        return
+
+    # Filter by genre first if specified
+    if genre:
+        tagged = [t for t in tagged if genre.lower() in (t["genre"] or "").lower()]
+        if not tagged:
+            console.print(f"[yellow]No tracks match genre '{genre}'.[/yellow]")
+            return
+
+    if like:
+        _suggest_like(like, tagged, count)
+    elif energy_curve:
+        _suggest_curve(tagged, energy_curve, count)
+    else:
+        # Default: show a diverse mix of tracks across energy levels
+        _suggest_diverse(tagged, count)
+
+
+def _suggest_like(ref_path: str, tracks: list[dict], count: int) -> None:
+    """Find tracks similar to a reference track."""
+    from .tagger import parse_filename, read_tags
+
+    ref_tags = read_tags(ref_path)
+    if not ref_tags.get("tagger_version"):
+        console.print("[yellow]Reference track is not tagged by DJ Tagger. Tag it first.[/yellow]")
+        raise typer.Exit(1)
+
+    ref_energy = float(ref_tags["energy"]) if ref_tags.get("energy") else 0.5
+    ref_valence = float(ref_tags["valence"]) if ref_tags.get("valence") else 0.5
+    ref_danceability = float(ref_tags["danceability"]) if ref_tags.get("danceability") else 0.5
+    ref_moods = {
+        "happy": float(ref_tags.get("mood_happy") or 0.5),
+        "sad": float(ref_tags.get("mood_sad") or 0.5),
+        "aggressive": float(ref_tags.get("mood_aggressive") or 0.5),
+        "relaxed": float(ref_tags.get("mood_relaxed") or 0.5),
+    }
+    ref_genre = (ref_tags.get("genre") or "").lower()
+    artist, _, title = parse_filename(ref_path)
+    ref_label = f"{artist} — {title}" if artist else title
+
+    def similarity(t: dict) -> float:
+        # Don't suggest the same file
+        if os.path.abspath(t["path"]) == os.path.abspath(ref_path):
+            return -999.0
+
+        score = 0.0
+        # Energy similarity (weight: 3) — close energy = good for mixing
+        e_diff = abs((t["energy"] or 0.5) - ref_energy)
+        score -= e_diff * 3.0
+
+        # Valence similarity (weight: 2)
+        v_diff = abs((t["valence"] or 0.5) - ref_valence)
+        score -= v_diff * 2.0
+
+        # Danceability similarity (weight: 1.5)
+        d_diff = abs((t["danceability"] or 0.5) - ref_danceability)
+        score -= d_diff * 1.5
+
+        # Mood similarity (weight: 1 each)
+        for mood in ("happy", "sad", "aggressive", "relaxed"):
+            m_diff = abs((t[f"mood_{mood}"] or 0.5) - ref_moods[mood])
+            score -= m_diff
+
+        # Genre bonus (weight: 2)
+        t_genre = (t["genre"] or "").lower()
+        if ref_genre and t_genre:
+            ref_parts = set(g.strip() for g in ref_genre.split(";"))
+            t_parts = set(g.strip() for g in t_genre.split(";"))
+            if ref_parts & t_parts:
+                score += 2.0
+
+        return score
+
+    ranked = sorted(tracks, key=similarity, reverse=True)[:count]
+
+    console.print(f"\n[bold cyan]🎵 Tracks similar to:[/bold cyan] [bold]{ref_label}[/bold]")
+    console.print(
+        f"[dim]   Energy: {ref_energy:.2f}  Valence: {ref_valence:.2f}  "
+        f"Genre: {ref_tags.get('genre', '—')}[/dim]\n"
+    )
+    _print_suggestion_table(ranked)
+
+
+def _suggest_curve(tracks: list[dict], curve: str, count: int) -> None:
+    """Build a set with an energy curve."""
+    if curve not in ("rising", "falling", "steady"):
+        console.print(f"[bold red]Error:[/bold red] --energy-curve must be rising, falling, or steady")
+        raise typer.Exit(1)
+
+    import numpy as np
+
+    # Build target energy progression
+    if curve == "rising":
+        targets = np.linspace(0.3, 0.95, count)
+        label = "🔺 Rising energy"
+    elif curve == "falling":
+        targets = np.linspace(0.95, 0.3, count)
+        label = "🔻 Falling energy"
+    else:
+        avg_e = np.mean([t["energy"] for t in tracks if t["energy"] is not None])
+        targets = np.full(count, avg_e)
+        label = f"➡️  Steady energy (~{avg_e:.2f})"
+
+    selected: list[dict] = []
+    used_paths: set[str] = set()
+
+    for target_e in targets:
+        best: dict | None = None
+        best_score = float("inf")
+        for t in tracks:
+            if t["path"] in used_paths:
+                continue
+            if t["energy"] is None:
+                continue
+            diff = abs(t["energy"] - target_e)
+            if diff < best_score:
+                best_score = diff
+                best = t
+        if best:
+            selected.append(best)
+            used_paths.add(best["path"])
+
+    console.print(f"\n[bold cyan]{label}[/bold cyan] — {len(selected)} tracks\n")
+    _print_suggestion_table(selected, show_index=True, energy_bar=True)
+
+
+def _suggest_diverse(tracks: list[dict], count: int) -> None:
+    """Suggest a diverse mix of tracks across energy levels."""
+    import numpy as np
+
+    # Pick tracks spread evenly across the energy range
+    sorted_by_energy = sorted(tracks, key=lambda t: t["energy"] or 0)
+    step = max(1, len(sorted_by_energy) // count)
+    selected = sorted_by_energy[::step][:count]
+    # Sort selected by energy for nice display
+    selected.sort(key=lambda t: t["energy"] or 0)
+
+    console.print(f"\n[bold cyan]🎲 Diverse selection[/bold cyan] — {len(selected)} tracks across energy range\n")
+    _print_suggestion_table(selected, show_index=True, energy_bar=True)
+
+
+def _print_suggestion_table(
+    tracks: list[dict],
+    show_index: bool = True,
+    energy_bar: bool = False,
+) -> None:
+    """Print a table of suggested tracks."""
+    table = Table(box=box.SIMPLE_HEAVY, border_style="dim", padding=(0, 1))
+    if show_index:
+        table.add_column("#", style="dim", justify="right")
+    table.add_column("Artist", style="bold", max_width=25, no_wrap=True)
+    table.add_column("Title", max_width=35, no_wrap=True)
+    table.add_column("Genre", max_width=20, no_wrap=True)
+    table.add_column("Energy", justify="right")
+    table.add_column("Valence", justify="right")
+    if energy_bar:
+        table.add_column("Level")
+
+    for i, t in enumerate(tracks, 1):
+        e_str = f"{t['energy']:.2f}" if t["energy"] is not None else "—"
+        v_str = f"{t['valence']:.2f}" if t["valence"] is not None else "—"
+        primary_genre = t["genre"].split(";")[0].strip() if t["genre"] else ""
+        row: list[str] = []
+        if show_index:
+            row.append(str(i))
+        row.extend([
+            t["artist"] or "[dim]—[/dim]",
+            t["title"],
+            primary_genre or "[dim]—[/dim]",
+            e_str,
+            v_str,
+        ])
+        if energy_bar:
+            row.append(_mini_bar(t["energy"] or 0))
+        table.add_row(*row)
+
+    console.print(table)
+    console.print()
+
+
+# ═════════════════════════════════════════════════════════════
+#  HEALTH command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def health(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to check",
+    ),
+) -> None:
+    """Check collection health — find weak spots, missing data, and quality issues."""
+    from collections import Counter
+
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    tracks = _scan_with_progress(path)
+    if not tracks:
+        console.print("[yellow]No MP3 files found.[/yellow]")
+        return
+
+    tagged = [t for t in tracks if t["tagged"]]
+    untagged = [t for t in tracks if not t["tagged"]]
+    ml_only = [t for t in tagged if t["genre_source"] == "ml"]
+    no_artist = [t for t in tracks if not t["artist"]]
+    no_genre = [t for t in tagged if not t["genre"]]
+    no_energy = [t for t in tagged if t["energy"] is None]
+    v4_tracks = [t for t in tagged if t["tagger_version"] and t["tagger_version"] != TAGGER_VERSION]
+
+    # Genre frequency — find rare genres
+    genre_counter: Counter = Counter()
+    for t in tagged:
+        primary = (t["genre"] or "").split(";")[0].strip()
+        if primary:
+            genre_counter[primary] += 1
+    rare_genres = [(g, c) for g, c in genre_counter.items() if c <= 2]
+    rare_genres.sort(key=lambda x: x[1])
+
+    # Build report
+    console.print(f"\n[bold cyan]🏥 Collection Health Report[/bold cyan]")
+    console.print(f"[dim]{path} — {len(tracks)} files[/dim]\n")
+
+    # Summary panel
+    issues: list[str] = []
+    good: list[str] = []
+
+    if untagged:
+        issues.append(f"[yellow]⚠[/yellow]  [bold]{len(untagged)}[/bold] tracks untagged")
+    else:
+        good.append("[green]✓[/green]  All tracks tagged")
+
+    if ml_only:
+        pct = len(ml_only) / len(tagged) * 100 if tagged else 0
+        issues.append(
+            f"[yellow]⚠[/yellow]  [bold]{len(ml_only)}[/bold] tracks with ML-only genres "
+            f"({pct:.0f}% — weakest confidence)"
+        )
+
+    bp_count = sum(1 for t in tagged if t["genre_source"] == "beatport")
+    fm_count = sum(1 for t in tagged if t["genre_source"] == "lastfm+ml")
+    if bp_count or fm_count:
+        good.append(
+            f"[green]✓[/green]  [bold]{bp_count + fm_count}[/bold] tracks with "
+            f"Beatport/Last.fm genres"
+        )
+
+    if no_artist:
+        issues.append(
+            f"[yellow]⚠[/yellow]  [bold]{len(no_artist)}[/bold] tracks with no artist in filename"
+        )
+    else:
+        good.append("[green]✓[/green]  All tracks have artist info")
+
+    if no_genre:
+        issues.append(f"[yellow]⚠[/yellow]  [bold]{len(no_genre)}[/bold] tagged tracks with no genre")
+
+    if no_energy:
+        issues.append(f"[yellow]⚠[/yellow]  [bold]{len(no_energy)}[/bold] tagged tracks missing energy data")
+    else:
+        if tagged:
+            good.append("[green]✓[/green]  All tagged tracks have energy/valence scores")
+
+    if rare_genres:
+        issues.append(
+            f"[yellow]⚠[/yellow]  [bold]{len(rare_genres)}[/bold] genres with only 1-2 tracks"
+        )
+
+    if v4_tracks:
+        issues.append(
+            f"[yellow]⚠[/yellow]  [bold]{len(v4_tracks)}[/bold] tracks tagged with older version "
+            f"(re-tag with --force for improved v5 accuracy)"
+        )
+
+    # Print issues first, then good
+    for line in issues:
+        console.print(f"  {line}")
+    for line in good:
+        console.print(f"  {line}")
+
+    console.print()
+
+    # Overall score
+    if tagged:
+        score_parts = []
+        # Coverage: 0-30 points
+        coverage = len(tagged) / len(tracks) if tracks else 0
+        score_parts.append(coverage * 30)
+        # High-quality sources: 0-40 points
+        hq_pct = (bp_count + fm_count) / len(tagged) if tagged else 0
+        score_parts.append(hq_pct * 40)
+        # Artist info: 0-15 points
+        artist_pct = (len(tracks) - len(no_artist)) / len(tracks) if tracks else 0
+        score_parts.append(artist_pct * 15)
+        # Genre completeness: 0-15 points
+        genre_pct = (len(tagged) - len(no_genre)) / len(tagged) if tagged else 0
+        score_parts.append(genre_pct * 15)
+
+        total_score = sum(score_parts)
+        if total_score >= 85:
+            grade, grade_color = "Excellent", "green"
+        elif total_score >= 70:
+            grade, grade_color = "Good", "cyan"
+        elif total_score >= 50:
+            grade, grade_color = "Fair", "yellow"
+        else:
+            grade, grade_color = "Needs Work", "red"
+
+        console.print(
+            f"  [bold]Health Score:[/bold] "
+            f"[bold {grade_color}]{total_score:.0f}/100 — {grade}[/bold {grade_color}]"
+        )
+        console.print()
+
+    # ─── Detail sections ────────────────────────────────────
+
+    # Untagged files
+    if untagged and len(untagged) <= 20:
+        ut_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title="Untagged Files", title_style="bold yellow",
+        )
+        ut_table.add_column("File", style="dim")
+        for t in untagged[:20]:
+            label = f"{t['artist']} — {t['title']}" if t["artist"] else t["title"]
+            ut_table.add_row(label)
+        console.print(ut_table)
+        console.print()
+
+    # ML-only tracks (show up to 15)
+    if ml_only:
+        ml_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title=f"ML-Only Genres ({len(ml_only)} tracks — consider re-checking)",
+            title_style="bold blue",
+        )
+        ml_table.add_column("Artist", style="bold", max_width=25, no_wrap=True)
+        ml_table.add_column("Title", max_width=35, no_wrap=True)
+        ml_table.add_column("Genre (ML)", style="dim")
+        for t in ml_only[:15]:
+            ml_table.add_row(
+                t["artist"] or "—",
+                t["title"],
+                t["genre"] or "—",
+            )
+        if len(ml_only) > 15:
+            ml_table.add_row(f"[dim]… and {len(ml_only) - 15} more[/dim]", "", "")
+        console.print(ml_table)
+        console.print()
+
+    # No-artist files (show up to 15)
+    if no_artist:
+        na_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title=f"Missing Artist ({len(no_artist)} files)",
+            title_style="bold yellow",
+        )
+        na_table.add_column("Filename", style="dim")
+        for t in no_artist[:15]:
+            na_table.add_row(os.path.basename(t["path"]))
+        if len(no_artist) > 15:
+            na_table.add_row(f"[dim]… and {len(no_artist) - 15} more[/dim]")
+        console.print(na_table)
+        console.print()
+
+    # Rare genres
+    if rare_genres:
+        rg_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title="Rare Genres (1-2 tracks)", title_style="bold",
+        )
+        rg_table.add_column("Genre", style="bold")
+        rg_table.add_column("Tracks", justify="right", style="dim")
+        for g, c in rare_genres:
+            rg_table.add_row(g, str(c))
+        console.print(rg_table)
+        console.print()
 
 
 # ─── Cleanup ────────────────────────────────────────────────

@@ -57,6 +57,13 @@ def read_tags(filepath: str) -> dict:
         "tagger_version": "",
         "comment": "",
         "comment_detail": "",
+        # v5 fields
+        "danceability": "",
+        "mood_party": "",
+        "arousal": "",
+        "peak_energy": "",
+        "intro_energy": "",
+        "energy_variance": "",
     }
     try:
         tags = ID3(filepath)
@@ -79,6 +86,13 @@ def read_tags(filepath: str) -> dict:
         "GENRE_SOURCE": "genre_source",
         "GENRE_DETECTED": "genre_detected",
         "TAGGER_VERSION": "tagger_version",
+        # v5 tags
+        "DANCEABILITY": "danceability",
+        "MOOD_PARTY": "mood_party",
+        "AROUSAL": "arousal",
+        "PEAK_ENERGY": "peak_energy",
+        "INTRO_ENERGY": "intro_energy",
+        "ENERGY_VARIANCE": "energy_variance",
     }
     for frame in tags.getall("TXXX"):
         if frame.desc in tag_map:
@@ -98,12 +112,24 @@ def read_tags(filepath: str) -> dict:
 # ─── Write tags ─────────────────────────────────────────────
 
 
-def _build_comment(energy: float, valence: float) -> tuple[str, str]:
+def _build_comment(
+    energy: float,
+    valence: float,
+    danceability: float = 0.0,
+    peak_energy: float = 0.0,
+    arousal: float = 0.0,
+) -> tuple[str, str]:
     """Build human-readable comment and detail string."""
     e_lbl = "Low" if energy < 0.4 else "Mid" if energy < 0.7 else "High"
     v_lbl = "Dark" if valence < 0.33 else "Neutral" if valence < 0.66 else "Bright"
-    comment = f"Energy: {e_lbl} | Mood: {v_lbl}"
-    detail = f"Energy:{e_lbl} Mood:{v_lbl} | E:{energy} V:{valence}"
+    d_lbl = "Low" if danceability < 0.4 else "Mid" if danceability < 0.7 else "High"
+
+    # Visible in Serato/rekordbox
+    comment = f"Energy: {e_lbl} | Mood: {v_lbl} | Dance: {d_lbl} | Peak: {peak_energy:.2f}"
+
+    # Hidden detail comment
+    detail = f"E:{energy} | V:{valence} | D:{danceability} | Peak:{peak_energy} | Arousal:{arousal}"
+
     return comment, detail
 
 
@@ -153,12 +179,25 @@ def write_tags(
             ("GENRE_SOURCE", genre_source),
             ("GENRE_DETECTED", "; ".join(genre_list[:4])),
             ("TAGGER_VERSION", TAGGER_VERSION),
+            # v5 tags
+            ("DANCEABILITY", result["danceability"]),
+            ("MOOD_PARTY", result["mood_party"]),
+            ("AROUSAL", result["arousal"]),
+            ("PEAK_ENERGY", result["peak_energy"]),
+            ("INTRO_ENERGY", result["intro_energy"]),
+            ("ENERGY_VARIANCE", result["energy_variance"]),
         ]:
             tags.delall(f"TXXX:{key}")
             tags.add(TXXX(encoding=3, desc=key, text=[str(val)]))
 
         # Comments
-        comment, detail = _build_comment(result["energy"], result["valence"])
+        comment, detail = _build_comment(
+            result["energy"],
+            result["valence"],
+            result.get("danceability", 0.0),
+            result.get("peak_energy", 0.0),
+            result.get("arousal", 0.0),
+        )
         tags.delall("COMM::eng")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
         tags.delall("COMM:djtagger:eng")
@@ -171,7 +210,7 @@ def write_tags(
 
 
 def fix_comments(filepath: str) -> bool:
-    """Re-write comments from existing TXXX energy/valence tags.
+    """Re-write comments from existing TXXX energy/valence/danceability tags.
 
     Returns True if comment was updated, False if skipped.
     """
@@ -189,7 +228,16 @@ def fix_comments(filepath: str) -> bool:
 
         e = float(e_tag.text[0])
         v = float(v_tag.text[0])
-        comment, detail = _build_comment(e, v)
+
+        # Read v5 fields if present (graceful for v4 files)
+        d_tag = tags.get("TXXX:DANCEABILITY")
+        d = float(d_tag.text[0]) if d_tag and d_tag.text else 0.0
+        p_tag = tags.get("TXXX:PEAK_ENERGY")
+        p = float(p_tag.text[0]) if p_tag and p_tag.text else 0.0
+        a_tag = tags.get("TXXX:AROUSAL")
+        a = float(a_tag.text[0]) if a_tag and a_tag.text else 0.0
+
+        comment, detail = _build_comment(e, v, d, p, a)
 
         tags.delall("COMM::eng")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))

@@ -22,7 +22,7 @@ LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────
 
-TAGGER_VERSION = "v4"
+TAGGER_VERSION = "v5"
 
 # Genres considered generic / empty — will be replaced
 GENERIC_GENRES = {"other", "unknown", "misc", "music", ""}
@@ -38,3 +38,19 @@ SOCKET_TIMEOUT = 10    # global socket default
 GENRE_MIN_PROB = 0.05   # minimum probability for ML genre
 GENRE_KEEP_PROB = 0.10  # threshold for inclusion in final list
 LASTFM_MIN_COUNT = 20   # minimum tag count for Last.fm genres
+
+# ─── Energy Formula Weights ────────────────────────────────
+
+ENERGY_W_DANCEABILITY = 0.05
+ENERGY_W_AROUSAL = 0.05
+ENERGY_W_AGGRESSIVE = 0.70
+ENERGY_W_RELAXED = 0.20
+
+# Scale raw energy to use more of the 0-1 range
+ENERGY_SCALE = 1.8
+ENERGY_OFFSET = 0.05
+
+# ─── Segment Analysis ──────────────────────────────────────
+
+SEGMENT_LENGTH_SEC = 30   # embedding frames per segment (~1 frame/sec)
+SEGMENT_HOP_SEC = 15      # hop between segments
