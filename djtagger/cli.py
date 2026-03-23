@@ -1573,6 +1573,277 @@ def clean_genres(
     console.print()
 
 
+# ═════════════════════════════════════════════════════════════
+#  BENCH-BPM command (diagnostic)
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command("bench-bpm")
+def bench_bpm(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to benchmark (recursive)",
+    ),
+    count: int = typer.Option(500, "--count", "-n", help="Number of tracks to test"),
+) -> None:
+    """Benchmark BPM + Key detection: compare Serato vs DSP vs TempoCNN on random tracks."""
+    import random
+
+    import numpy as np
+    from mutagen.id3 import ID3
+
+    from .scanner import find_mp3s
+    from .tagger import parse_filename
+    from .config import CAMELOT_MAP
+
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]🎯 BPM + Key Benchmark[/bold cyan]")
+    console.print(f"[dim]{path}[/dim]\n")
+
+    all_mp3s = find_mp3s(path)
+    # Only tracks that have existing BPM (from Serato)
+    with_bpm: list[tuple[str, float, str]] = []
+    for mp3 in all_mp3s:
+        try:
+            tags = ID3(mp3)
+            tbpm = tags.getall("TBPM")
+            tkey = tags.getall("TKEY")
+            bpm_val = 0.0
+            key_val = ""
+            if tbpm and tbpm[0].text and tbpm[0].text[0].strip():
+                bpm_val = float(tbpm[0].text[0].strip())
+            if tkey and tkey[0].text and tkey[0].text[0].strip():
+                key_val = tkey[0].text[0].strip()
+            if bpm_val > 0:
+                with_bpm.append((mp3, bpm_val, key_val))
+        except Exception:
+            pass
+
+    console.print(f"Found [bold]{len(with_bpm)}[/bold] tracks with existing BPM")
+
+    random.seed(42)
+    sample = random.sample(with_bpm, min(count, len(with_bpm)))
+    console.print(f"Sampling [bold]{len(sample)}[/bold] tracks\n")
+
+    # Lazy import essentia
+    console.print("[dim]Loading models...[/dim]")
+
+    import warnings
+    import logging
+    os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+    warnings.filterwarnings("ignore")
+    logging.getLogger("essentia").setLevel(logging.ERROR)
+    logging.getLogger("tensorflow").setLevel(logging.ERROR)
+
+    import essentia
+    essentia.log.warningActive = False
+    essentia.log.infoActive = False
+    import essentia.standard as es
+
+    from .config import MODEL_DIR
+
+    # Load TempoCNN
+    tempo_cnn_path = f"{MODEL_DIR}/deepsquare-k16-3.pb"
+    tempo_cnn = None
+    if os.path.isfile(tempo_cnn_path):
+        tempo_cnn = es.TensorflowPredictTempoCNN(graphFilename=tempo_cnn_path)
+        console.print("[bold green]✓[/bold green] TempoCNN loaded")
+    else:
+        console.print("[yellow]⚠ TempoCNN model not found — skipping[/yellow]")
+
+    console.print()
+
+    # Run benchmark
+    results: list[dict] = []
+    errors = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Benchmarking", total=len(sample))
+        for mp3, serato_bpm, serato_key in sample:
+            artist, _, title = parse_filename(mp3)
+            label = f"{artist} - {title}" if artist else os.path.basename(mp3)
+
+            row: dict = {
+                "label": label[:55],
+                "serato_bpm": serato_bpm,
+                "serato_key": serato_key,
+                "dsp_bpm": None,
+                "cnn_bpm": None,
+                "detected_key": None,
+            }
+
+            try:
+                audio_44k = es.MonoLoader(filename=mp3, sampleRate=44100)()
+
+                # DSP BPM
+                rhythm = es.RhythmExtractor2013(method="multifeature")
+                dsp_bpm, _, _, _, _ = rhythm(audio_44k)
+                row["dsp_bpm"] = round(float(dsp_bpm), 2)
+
+                # TempoCNN BPM
+                if tempo_cnn is not None:
+                    audio_11k = es.MonoLoader(filename=mp3, sampleRate=11025)()
+                    preds = tempo_cnn(audio_11k)
+                    avg = np.mean(preds, axis=0)
+                    peak = int(np.argmax(avg))
+                    w = 5
+                    lo, hi = max(0, peak - w), min(len(avg), peak + w + 1)
+                    cnn_bpm = float(np.average(np.arange(lo, hi) + 30, weights=avg[lo:hi]))
+                    row["cnn_bpm"] = round(cnn_bpm, 2)
+
+                # Key detection
+                key_ext = es.KeyExtractor()
+                key_name, scale, _ = key_ext(audio_44k)
+                standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
+                row["detected_key"] = CAMELOT_MAP.get(standard_key, standard_key)
+
+                results.append(row)
+            except Exception:
+                errors += 1
+
+            progress.advance(task)
+
+    # ─── BPM Analysis ────────────────────────────────────
+    console.print()
+
+    def _is_bpm_match(a: float, b: float, tol: float = 1.0) -> bool:
+        """Match within tolerance, accounting for half/double time."""
+        diff = abs(a - b)
+        half = abs(a - b * 2)
+        double = abs(a * 2 - b)
+        return diff <= tol or half <= tol or double <= tol
+
+    n = len(results)
+    n_cnn = sum(1 for r in results if r["cnn_bpm"] is not None)
+
+    dsp_exact = sum(1 for r in results if r["dsp_bpm"] and _is_bpm_match(r["serato_bpm"], r["dsp_bpm"], 0.5))
+    dsp_close = sum(1 for r in results if r["dsp_bpm"] and _is_bpm_match(r["serato_bpm"], r["dsp_bpm"], 1.0))
+    dsp_loose = sum(1 for r in results if r["dsp_bpm"] and _is_bpm_match(r["serato_bpm"], r["dsp_bpm"], 2.0))
+
+    cnn_exact = sum(1 for r in results if r["cnn_bpm"] and _is_bpm_match(r["serato_bpm"], r["cnn_bpm"], 0.5))
+    cnn_close = sum(1 for r in results if r["cnn_bpm"] and _is_bpm_match(r["serato_bpm"], r["cnn_bpm"], 1.0))
+    cnn_loose = sum(1 for r in results if r["cnn_bpm"] and _is_bpm_match(r["serato_bpm"], r["cnn_bpm"], 2.0))
+
+    bpm_table = Table(
+        box=box.ROUNDED, border_style="dim",
+        title="BPM Accuracy vs Serato", title_style="bold",
+    )
+    bpm_table.add_column("Tolerance", style="bold")
+    bpm_table.add_column("DSP (RhythmExtractor)", justify="right")
+    bpm_table.add_column("TempoCNN", justify="right")
+    bpm_table.add_row(
+        "±0.5 BPM (exact)",
+        f"[green]{dsp_exact}[/green]/{n} ({dsp_exact/n*100:.1f}%)" if n else "—",
+        f"[green]{cnn_exact}[/green]/{n_cnn} ({cnn_exact/n_cnn*100:.1f}%)" if n_cnn else "—",
+    )
+    bpm_table.add_row(
+        "±1.0 BPM (close)",
+        f"[green]{dsp_close}[/green]/{n} ({dsp_close/n*100:.1f}%)" if n else "—",
+        f"[green]{cnn_close}[/green]/{n_cnn} ({cnn_close/n_cnn*100:.1f}%)" if n_cnn else "—",
+    )
+    bpm_table.add_row(
+        "±2.0 BPM (loose)",
+        f"[green]{dsp_loose}[/green]/{n} ({dsp_loose/n*100:.1f}%)" if n else "—",
+        f"[green]{cnn_loose}[/green]/{n_cnn} ({cnn_loose/n_cnn*100:.1f}%)" if n_cnn else "—",
+    )
+    console.print(bpm_table)
+    console.print()
+
+    # ─── Key Analysis ────────────────────────────────────
+    key_results = [r for r in results if r["serato_key"] and r["detected_key"]]
+    key_match = sum(1 for r in key_results if r["serato_key"] == r["detected_key"])
+    key_total = len(key_results)
+
+    key_table = Table(
+        box=box.ROUNDED, border_style="dim",
+        title="Key Accuracy vs Serato (Camelot)", title_style="bold",
+    )
+    key_table.add_column("Metric", style="bold")
+    key_table.add_column("Value", justify="right")
+    key_table.add_row(
+        "Exact Camelot match",
+        f"[green]{key_match}[/green]/{key_total} ({key_match/key_total*100:.1f}%)" if key_total else "—",
+    )
+    key_table.add_row(
+        "Mismatch",
+        f"[yellow]{key_total - key_match}[/yellow]/{key_total} ({(key_total-key_match)/key_total*100:.1f}%)" if key_total else "—",
+    )
+    console.print(key_table)
+    console.print()
+
+    # ─── BPM Mismatches ─────────────────────────────────
+    bpm_mismatches: list[dict] = []
+    for r in results:
+        dsp_off = abs(r["serato_bpm"] - r["dsp_bpm"]) if r["dsp_bpm"] else 999
+        cnn_off = abs(r["serato_bpm"] - r["cnn_bpm"]) if r["cnn_bpm"] else 999
+        if r["dsp_bpm"] and not _is_bpm_match(r["serato_bpm"], r["dsp_bpm"], 2.0):
+            dsp_off = min(dsp_off, abs(r["serato_bpm"] - r["dsp_bpm"] * 2), abs(r["serato_bpm"] * 2 - r["dsp_bpm"]))
+        if r["cnn_bpm"] and not _is_bpm_match(r["serato_bpm"], r["cnn_bpm"], 2.0):
+            cnn_off = min(cnn_off, abs(r["serato_bpm"] - r["cnn_bpm"] * 2), abs(r["serato_bpm"] * 2 - r["cnn_bpm"]))
+
+        if dsp_off > 2.0 or cnn_off > 2.0:
+            r["dsp_off"] = dsp_off
+            r["cnn_off"] = cnn_off
+            bpm_mismatches.append(r)
+
+    if bpm_mismatches:
+        mm_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title=f"BPM Mismatches (>2 off) — {len(bpm_mismatches)} tracks",
+            title_style="bold yellow",
+        )
+        mm_table.add_column("Track", max_width=45, no_wrap=True)
+        mm_table.add_column("Serato", justify="right")
+        mm_table.add_column("DSP", justify="right")
+        mm_table.add_column("CNN", justify="right")
+        for r in sorted(bpm_mismatches, key=lambda x: max(x.get("dsp_off", 0), x.get("cnn_off", 0)), reverse=True)[:25]:
+            dsp_str = f"{r['dsp_bpm']:.2f}" if r["dsp_bpm"] else "—"
+            cnn_str = f"{r['cnn_bpm']:.2f}" if r["cnn_bpm"] else "—"
+            dsp_color = "red" if r.get("dsp_off", 0) > 2 else "green"
+            cnn_color = "red" if r.get("cnn_off", 0) > 2 else "green"
+            mm_table.add_row(
+                r["label"],
+                f"{r['serato_bpm']}",
+                f"[{dsp_color}]{dsp_str}[/{dsp_color}]",
+                f"[{cnn_color}]{cnn_str}[/{cnn_color}]",
+            )
+        console.print(mm_table)
+        console.print()
+
+    # ─── Key Mismatches (sample) ─────────────────────────
+    key_mismatches = [r for r in key_results if r["serato_key"] != r["detected_key"]]
+    if key_mismatches:
+        km_table = Table(
+            box=box.SIMPLE, border_style="dim",
+            title=f"Key Mismatches — {len(key_mismatches)} tracks (showing 25)",
+            title_style="bold yellow",
+        )
+        km_table.add_column("Track", max_width=45, no_wrap=True)
+        km_table.add_column("Serato", justify="center")
+        km_table.add_column("Detected", justify="center")
+        for r in key_mismatches[:25]:
+            km_table.add_row(
+                r["label"],
+                f"[green]{r['serato_key']}[/green]",
+                f"[yellow]{r['detected_key']}[/yellow]",
+            )
+        console.print(km_table)
+
+    if errors:
+        console.print(f"\n[dim]{errors} tracks failed to analyze[/dim]")
+    console.print()
+
+
 # ─── Cleanup ────────────────────────────────────────────────
 
 

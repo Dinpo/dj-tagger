@@ -282,12 +282,12 @@ def analyze_track(filepath: str, models: dict) -> dict:
             hi = min(len(avg_preds), peak_bin + window + 1)
             bpm = round(float(np.average(
                 np.arange(lo, hi) + 30, weights=avg_preds[lo:hi]
-            )), 1)
+            )), 2)
         else:
             # DSP fallback
             rhythm = es.RhythmExtractor2013(method="multifeature")
             bpm_val, _, _, _, _ = rhythm(audio_44k)
-            bpm = round(float(bpm_val), 1)
+            bpm = round(float(bpm_val), 2)
     except Exception:
         bpm = 0
 
