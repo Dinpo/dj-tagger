@@ -184,6 +184,7 @@ def analyze_track(filepath: str, models: dict) -> dict:
     intro_energy, energy_variance, duration.
     """
     audio = es.MonoLoader(filename=filepath, sampleRate=16000)()
+    audio_44k = es.MonoLoader(filename=filepath, sampleRate=44100)()
     embeddings = models["embed"](audio)
 
     # ─── Genre predictions (Discogs 400-class) ──────────────
@@ -259,6 +260,24 @@ def analyze_track(filepath: str, models: dict) -> dict:
             (moods["happy"] - moods["sad"] + 1) / 2, 0, 1
         )), 3)
 
+    # ─── BPM + Key detection (DSP, no model needed) ──────
+    try:
+        rhythm = es.RhythmExtractor2013(method="multifeature")
+        bpm_val, _, bpm_confidence, _, _ = rhythm(audio_44k)
+        bpm = round(float(bpm_val))
+    except Exception:
+        bpm = 0
+        bpm_confidence = 0.0
+
+    try:
+        key_extractor = es.KeyExtractor()
+        key_name, scale, key_strength = key_extractor(audio_44k)
+        key_str = f"{key_name}{'m' if scale == 'minor' else ''}"
+        key_strength = round(float(key_strength), 3)
+    except Exception:
+        key_str = ""
+        key_strength = 0.0
+
     # ─── Energy helpers ───────────────────────────────────
     def _raw_energy(dance_v: float, arousal_v: float, agg_v: float, rel_v: float) -> float:
         """Compute raw energy from weighted signals, then scale to useful range."""
@@ -322,5 +341,8 @@ def analyze_track(filepath: str, models: dict) -> dict:
         "peak_energy": peak_energy,
         "intro_energy": intro_energy,
         "energy_variance": energy_variance,
-        "duration": len(audio) / 16000,
+        "bpm": bpm,
+        "key": key_str,
+        "key_strength": key_strength,
+        "duration": len(audio_44k) / 44100,
     }

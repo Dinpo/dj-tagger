@@ -515,6 +515,14 @@ def info(
         table.add_row("Genre (detected)", f"[dim]{tags['genre_detected']}[/dim]")
     table.add_row("", "")
 
+    # BPM & Key
+    if tags.get("bpm"):
+        table.add_row("BPM", f"[bold]{tags['bpm']}[/bold]")
+    if tags.get("key"):
+        table.add_row("Key", f"[bold]{tags['key']}[/bold]")
+    if tags.get("bpm") or tags.get("key"):
+        table.add_row("", "")
+
     # Energy & Mood
     if tags.get("energy"):
         e = float(tags["energy"])
@@ -1488,6 +1496,81 @@ def health(
             rg_table.add_row(g, str(c))
         console.print(rg_table)
         console.print()
+
+
+# ═════════════════════════════════════════════════════════════
+#  CLEAN-GENRES command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command("clean-genres")
+def clean_genres(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to clean (recursive)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be cleaned without writing"),
+) -> None:
+    """Remove junk genre tags (URLs, spam, foreign text) and replace with detected genres."""
+    from .scanner import find_mp3s
+    from .tagger import clean_junk_genre, read_tags
+    from .config import is_junk_genre
+
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]🧹 Clean Genres[/bold cyan] {'(dry run)' if dry_run else ''}")
+    console.print(f"[dim]{path}[/dim]\n")
+
+    all_mp3s = find_mp3s(path)
+    cleaned = 0
+    junk_found = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+        transient=not dry_run,
+    ) as progress:
+        task = progress.add_task("Scanning for junk genres", total=len(all_mp3s))
+        for mp3 in all_mp3s:
+            tags = read_tags(mp3)
+            genre = tags.get("genre", "")
+            if genre and is_junk_genre(genre):
+                junk_found += 1
+                artist = tags.get("genre", "")
+                fname = os.path.basename(mp3)
+
+                if dry_run:
+                    detected = tags.get("genre_detected", "")
+                    replacement = detected if detected and not is_junk_genre(detected) else "[clear]"
+                    console.print(
+                        f"  [yellow]✗[/yellow] [dim]{fname[:60]}[/dim]\n"
+                        f"    [red]\"{genre}\"[/red] → [green]\"{replacement}\"[/green]"
+                    )
+                else:
+                    changed, desc = clean_junk_genre(mp3)
+                    if changed:
+                        cleaned += 1
+                        console.print(f"  [green]✓[/green] {desc}")
+
+            progress.advance(task)
+
+    console.print()
+    if dry_run:
+        console.print(
+            f"[bold yellow]Dry run:[/bold yellow] found [bold]{junk_found}[/bold] "
+            f"junk genres across {len(all_mp3s)} files. Run without --dry-run to fix."
+        )
+    else:
+        console.print(
+            f"[bold green]Done![/bold green] Cleaned [bold]{cleaned}[/bold] junk genres "
+            f"out of {len(all_mp3s)} files."
+        )
+    console.print()
 
 
 # ─── Cleanup ────────────────────────────────────────────────

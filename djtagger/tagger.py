@@ -3,9 +3,9 @@
 import os
 import re
 
-from mutagen.id3 import ID3, TXXX, TCON, COMM, ID3NoHeaderError
+from mutagen.id3 import ID3, TXXX, TCON, TBPM, TKEY, COMM, ID3NoHeaderError
 
-from .config import GENERIC_GENRES, TAGGER_VERSION
+from .config import GENERIC_GENRES, TAGGER_VERSION, is_junk_genre
 
 # ─── Read helpers ───────────────────────────────────────────
 
@@ -57,6 +57,8 @@ def read_tags(filepath: str) -> dict:
         "tagger_version": "",
         "comment": "",
         "comment_detail": "",
+        "bpm": "",
+        "key": "",
         # v5 fields
         "danceability": "",
         "mood_party": "",
@@ -74,6 +76,14 @@ def read_tags(filepath: str) -> dict:
     tcon = tags.getall("TCON")
     if tcon and tcon[0].text:
         info["genre"] = tcon[0].text[0].strip()
+
+    # TBPM / TKEY (standard frames)
+    tbpm = tags.getall("TBPM")
+    if tbpm and tbpm[0].text:
+        info["bpm"] = tbpm[0].text[0].strip()
+    tkey = tags.getall("TKEY")
+    if tkey and tkey[0].text:
+        info["key"] = tkey[0].text[0].strip()
 
     # TXXX custom tags
     tag_map = {
@@ -149,7 +159,7 @@ def write_tags(
         except ID3NoHeaderError:
             tags = ID3()
 
-        # Genre: only overwrite if existing is generic/empty
+        # Genre: only overwrite if existing is generic/empty/junk
         existing_genre = ""
         tcon = tags.getall("TCON")
         if tcon and tcon[0].text:
@@ -157,7 +167,7 @@ def write_tags(
 
         if genre_list:
             genre_str = "; ".join(genre_list[:4])
-            if existing_genre.lower() in GENERIC_GENRES or not existing_genre:
+            if not existing_genre or is_junk_genre(existing_genre):
                 tags.delall("TCON")
                 tags.add(TCON(encoding=3, text=[genre_str]))
                 genre_action = "replaced"
@@ -203,6 +213,20 @@ def write_tags(
         tags.delall("COMM:djtagger:eng")
         tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
 
+        # BPM — only write if not already set
+        if result.get("bpm"):
+            existing_bpm = tags.getall("TBPM")
+            if not existing_bpm or not existing_bpm[0].text or not existing_bpm[0].text[0].strip():
+                tags.delall("TBPM")
+                tags.add(TBPM(encoding=3, text=[str(result["bpm"])]))
+
+        # Key — only write if not already set
+        if result.get("key"):
+            existing_key = tags.getall("TKEY")
+            if not existing_key or not existing_key[0].text or not existing_key[0].text[0].strip():
+                tags.delall("TKEY")
+                tags.add(TKEY(encoding=3, text=[str(result["key"])]))
+
         tags.save(filepath)
         return True, genre_action
     except Exception as ex:
@@ -247,3 +271,40 @@ def fix_comments(filepath: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def clean_junk_genre(filepath: str) -> tuple[bool, str]:
+    """Remove junk genre tags, replacing with GENRE_DETECTED if available.
+
+    Returns (changed, description). changed=True if genre was cleaned.
+    """
+    try:
+        tags = ID3(filepath)
+    except Exception:
+        return False, "no tags"
+
+    tcon = tags.getall("TCON")
+    if not tcon or not tcon[0].text:
+        return False, "no genre"
+
+    existing = tcon[0].text[0].strip()
+    if not is_junk_genre(existing):
+        return False, "ok"
+
+    # Try to use GENRE_DETECTED as replacement
+    detected = ""
+    for frame in tags.getall("TXXX"):
+        if frame.desc == "GENRE_DETECTED" and frame.text:
+            detected = frame.text[0].strip()
+            break
+
+    if detected and not is_junk_genre(detected):
+        tags.delall("TCON")
+        tags.add(TCON(encoding=3, text=[detected]))
+        tags.save(filepath)
+        return True, f"replaced '{existing}' → '{detected}'"
+    else:
+        # No good replacement — just clear the junk
+        tags.delall("TCON")
+        tags.save(filepath)
+        return True, f"cleared '{existing}'"

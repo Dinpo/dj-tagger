@@ -46,6 +46,10 @@ def scan_library(
             "comment_detail": tags.get("comment_detail", ""),
         }
 
+        # String fields
+        record["bpm"] = tags.get("bpm", "")
+        record["key"] = tags.get("key", "")
+
         # Numeric fields — convert to float or None
         for key in ("energy", "valence", "mood_happy", "mood_sad",
                      "mood_aggressive", "mood_relaxed",

@@ -27,6 +27,38 @@ TAGGER_VERSION = "v5"
 # Genres considered generic / empty — will be replaced
 GENERIC_GENRES = {"other", "unknown", "misc", "music", ""}
 
+# Patterns that indicate a junk/spam genre tag (URLs, foreign spam, nonsense)
+JUNK_GENRE_PATTERNS = [
+    "http", "www.", ".com", ".ru", ".net",
+    "vk.com", "twitter", "mp3impulse",
+    "muzdo", "muzpark", "realtones",
+    "getliftedtonight", "stopbreathebump",
+    "lmp music", "prime music", "[ ra",
+]
+
+# Exact junk genres (case-insensitive)
+JUNK_GENRES_EXACT = {
+    "genre",
+    "танцевальная",
+    "танцевальная музыка",
+    "танцевальная/электронная музыка",
+    "другое",
+}
+
+
+def is_junk_genre(genre: str) -> bool:
+    """Check if a genre string is junk (URLs, spam, foreign nonsense)."""
+    if not genre:
+        return False
+    g = genre.lower().strip()
+    if g in GENERIC_GENRES:
+        return True
+    if g in JUNK_GENRES_EXACT:
+        return True
+    if any(pat in g for pat in JUNK_GENRE_PATTERNS):
+        return True
+    return False
+
 # ─── Network ────────────────────────────────────────────────
 
 BEATPORT_TIMEOUT = 8   # seconds (curl -m)
