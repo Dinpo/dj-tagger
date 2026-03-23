@@ -1574,6 +1574,199 @@ def clean_genres(
 
 
 # ═════════════════════════════════════════════════════════════
+#  FIX-AUDIT command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command("fix-audit")
+def fix_audit(
+    report: str = typer.Argument("/tmp/audit-report.json", help="Path to audit report JSON"),
+    fix_filenames: bool = typer.Option(
+        False, "--fix-filenames",
+        help="Also rename files with no artist (requires Serato relinking after)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be fixed without writing"),
+) -> None:
+    """Fix issues from a serato-reader audit report (BPM, key, genre gaps)."""
+    import socket
+
+    if not os.path.isfile(report):
+        console.print(f"[bold red]Error:[/bold red] {report} not found")
+        raise typer.Exit(1)
+
+    with open(report) as f:
+        data = json.load(f)
+
+    tracks = data.get("tracks", [])
+    if not tracks:
+        console.print("[yellow]No tracks with issues in report.[/yellow]")
+        return
+
+    summary = data.get("summary", {})
+    console.print(f"\n[bold cyan]🔧 Fix Audit Issues[/bold cyan] {'(dry run)' if dry_run else ''}")
+    console.print(f"[dim]{report}[/dim]")
+    console.print(f"[dim]{summary.get('unique_tracks_with_issues', len(tracks))} tracks with issues[/dim]\n")
+
+    # Supported formats for tagging
+    TAGGABLE = {".mp3", ".m4a", ".mp4", ".aac"}
+
+    # Categorize what we can fix
+    fixable: list[dict] = []
+    skipped_format: list[dict] = []
+    skipped_filename: list[dict] = []
+
+    for t in tracks:
+        path = t["path"]
+        issues = set(t.get("issues", []))
+        ext = os.path.splitext(path)[1].lower()
+
+        if not os.path.isfile(path):
+            console.print(f"  [red]✗[/red] [dim]File not found: {os.path.basename(path)}[/dim]")
+            continue
+
+        if "no artist" in issues and not fix_filenames:
+            skipped_filename.append(t)
+            issues.discard("no artist")
+
+        fixable_issues = issues & {"missing BPM", "no key", "no genre"}
+        if not fixable_issues:
+            continue
+
+        if ext not in TAGGABLE:
+            skipped_format.append(t)
+            continue
+
+        fixable.append({"track": t, "issues": fixable_issues, "ext": ext})
+
+    if not fixable:
+        console.print("[yellow]Nothing to fix (all issues are in unsupported formats or filenames).[/yellow]")
+        if skipped_format:
+            console.print(f"[dim]  {len(skipped_format)} tracks in unsupported formats (WAV)[/dim]")
+        if skipped_filename:
+            console.print(f"[dim]  {len(skipped_filename)} tracks need filename fix (use --fix-filenames)[/dim]")
+        console.print()
+        return
+
+    # Load models for BPM/key/genre detection
+    socket.setdefaulttimeout(10)
+    needs_ml = any("no genre" in f["issues"] for f in fixable)
+
+    if needs_ml or any("missing BPM" in f["issues"] or "no key" in f["issues"] for f in fixable):
+        console.print("[dim]Loading analysis models...[/dim]")
+        from .analyzer import analyze_track, load_models
+        from .genres import resolve_genres
+        from .tagger import write_tags, parse_filename
+        from .config import GENRE_KEEP_PROB
+
+        models = load_models()
+        console.print("[bold green]✓[/bold green] Models loaded\n")
+    else:
+        models = None
+
+    fixed_count = 0
+    for item in fixable:
+        t = item["track"]
+        issues = item["issues"]
+        path = t["path"]
+        ext = item["ext"]
+        fname = os.path.basename(path)
+        crates = ", ".join(t.get("crates", []))
+
+        console.print(f"  [bold]{fname[:65]}[/bold]")
+        console.print(f"  [dim]Crates: {crates[:70]}[/dim]")
+        console.print(f"  Issues: [yellow]{', '.join(sorted(issues))}[/yellow]")
+
+        if dry_run:
+            console.print(f"  [dim]→ Would analyze and fix[/dim]\n")
+            continue
+
+        if ext == ".mp3" and models is not None:
+            try:
+                artist, artist_clean, title = parse_filename(path)
+                result = analyze_track(path, models)
+
+                # Resolve genre if needed
+                if "no genre" in issues:
+                    final_genres, genre_source = resolve_genres(
+                        artist, artist_clean, title,
+                        result["genres"],
+                        ml_electronic_genres=result.get("electronic_genres"),
+                        use_beatport=True,
+                        genre_keep_prob=GENRE_KEEP_PROB,
+                    )
+                else:
+                    final_genres, genre_source = [], "ml"
+
+                ok, action = write_tags(path, result, genre_source, final_genres)
+                if ok:
+                    fixes = []
+                    if "missing BPM" in issues:
+                        fixes.append(f"BPM: {result.get('bpm', '?')}")
+                    if "no key" in issues:
+                        fixes.append(f"Key: {result.get('key', '?')}")
+                    if "no genre" in issues:
+                        genre_str = "; ".join(final_genres[:3]) if final_genres else "(none)"
+                        fixes.append(f"Genre: {genre_str} [{genre_source}]")
+                    console.print(f"  [green]✓[/green] {', '.join(fixes)}\n")
+                    fixed_count += 1
+                else:
+                    console.print(f"  [red]✗[/red] Write failed: {action}\n")
+            except Exception as ex:
+                console.print(f"  [red]✗[/red] Error: {ex}\n")
+
+        elif ext in (".m4a", ".mp4", ".aac"):
+            # M4A: can detect BPM/key and write with mutagen MP4
+            try:
+                from mutagen.mp4 import MP4
+
+                result = analyze_track(path, models) if models else None
+                if result is None:
+                    console.print(f"  [red]✗[/red] Models not loaded\n")
+                    continue
+
+                audio = MP4(path)
+                fixes = []
+
+                if "missing BPM" in issues and result.get("bpm"):
+                    audio.tags["tmpo"] = [int(round(result["bpm"]))]
+                    fixes.append(f"BPM: {result['bpm']:.2f}")
+
+                # M4A doesn't have a standard key tag, skip key for now
+                if "no key" in issues:
+                    fixes.append("Key: [dim]not supported for m4a[/dim]")
+
+                if "no genre" in issues:
+                    artist, artist_clean, title = parse_filename(path)
+                    final_genres, genre_source = resolve_genres(
+                        artist, artist_clean, title,
+                        result["genres"],
+                        ml_electronic_genres=result.get("electronic_genres"),
+                        use_beatport=True,
+                        genre_keep_prob=GENRE_KEEP_PROB,
+                    )
+                    if final_genres:
+                        audio.tags["\xa9gen"] = ["; ".join(final_genres[:3])]
+                        fixes.append(f"Genre: {'; '.join(final_genres[:3])} [{genre_source}]")
+
+                if fixes:
+                    audio.save()
+                    console.print(f"  [green]✓[/green] {', '.join(fixes)}\n")
+                    fixed_count += 1
+            except Exception as ex:
+                console.print(f"  [red]✗[/red] Error: {ex}\n")
+
+    console.print(f"[bold green]Done![/bold green] Fixed {fixed_count} tracks.")
+    if skipped_format:
+        console.print(f"[dim]Skipped {len(skipped_format)} WAV files (can't write tags to WAV)[/dim]")
+    if skipped_filename:
+        console.print(
+            f"[dim]Skipped {len(skipped_filename)} filename issues "
+            f"(use --fix-filenames to rename)[/dim]"
+        )
+    console.print()
+
+
+# ═════════════════════════════════════════════════════════════
 #  BENCH-BPM command (diagnostic)
 # ═════════════════════════════════════════════════════════════
 
