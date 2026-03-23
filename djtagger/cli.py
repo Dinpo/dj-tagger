@@ -1767,6 +1767,111 @@ def fix_audit(
 
 
 # ═════════════════════════════════════════════════════════════
+#  CONVERT-KEYS command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command("convert-keys")
+def convert_keys(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Folder to convert (recursive)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be converted without writing"),
+) -> None:
+    """Convert all standard-notation keys (Am, Fm, etc.) to Camelot notation (8A, 4A, etc.)."""
+    import re
+
+    from mutagen.id3 import ID3, TKEY
+
+    from .config import CAMELOT_MAP
+    from .scanner import find_mp3s
+
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold cyan]🔑 Convert Keys to Camelot[/bold cyan] {'(dry run)' if dry_run else ''}")
+    console.print(f"[dim]{path}[/dim]\n")
+
+    all_mp3s = find_mp3s(path)
+    camelot_pattern = re.compile(r"^\d{1,2}[AB]$", re.IGNORECASE)
+
+    converted = 0
+    already_camelot = 0
+    no_key = 0
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        console=console,
+        transient=not dry_run,
+    ) as progress:
+        task = progress.add_task("Scanning keys", total=len(all_mp3s))
+        for mp3 in all_mp3s:
+            try:
+                tags = ID3(mp3)
+                tkey = tags.getall("TKEY")
+                if not tkey or not tkey[0].text or not tkey[0].text[0].strip():
+                    no_key += 1
+                    progress.advance(task)
+                    continue
+
+                key = tkey[0].text[0].strip()
+
+                if camelot_pattern.match(key):
+                    # Normalize lowercase camelot (4a → 4A)
+                    normalized = key.upper()
+                    if normalized != key:
+                        if not dry_run:
+                            tags.delall("TKEY")
+                            tags.add(TKEY(encoding=3, text=[normalized]))
+                            tags.save(mp3)
+                        converted += 1
+                    else:
+                        already_camelot += 1
+                    progress.advance(task)
+                    continue
+
+                # Try to convert
+                camelot = CAMELOT_MAP.get(key)
+                if camelot:
+                    if dry_run:
+                        console.print(
+                            f"  {key:>4s} → [green]{camelot:>3s}[/green]  "
+                            f"[dim]{os.path.basename(mp3)[:60]}[/dim]"
+                        )
+                    else:
+                        tags.delall("TKEY")
+                        tags.add(TKEY(encoding=3, text=[camelot]))
+                        tags.save(mp3)
+                    converted += 1
+                else:
+                    console.print(
+                        f"  [yellow]?[/yellow] Unknown key [bold]{key}[/bold]  "
+                        f"[dim]{os.path.basename(mp3)[:55]}[/dim]"
+                    )
+            except Exception:
+                pass
+            progress.advance(task)
+
+    console.print()
+    if dry_run:
+        console.print(
+            f"[bold yellow]Dry run:[/bold yellow] {converted} keys to convert, "
+            f"{already_camelot} already Camelot, {no_key} no key set"
+        )
+    else:
+        console.print(
+            f"[bold green]Done![/bold green] Converted [bold]{converted}[/bold] keys to Camelot. "
+            f"{already_camelot} already Camelot, {no_key} no key set."
+        )
+    console.print()
+
+
+# ═════════════════════════════════════════════════════════════
 #  BENCH-BPM command (diagnostic)
 # ═════════════════════════════════════════════════════════════
 
