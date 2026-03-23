@@ -2000,7 +2000,7 @@ def bench_bpm(
                     row["cnn_bpm"] = round(cnn_bpm, 2)
 
                 # Key detection
-                key_ext = es.KeyExtractor()
+                key_ext = es.KeyExtractor(profileType="edmm")
                 key_name, scale, _ = key_ext(audio_44k)
                 standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
                 row["detected_key"] = CAMELOT_MAP.get(standard_key, standard_key)

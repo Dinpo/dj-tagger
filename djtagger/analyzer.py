@@ -292,7 +292,7 @@ def analyze_track(filepath: str, models: dict) -> dict:
         bpm = 0
 
     try:
-        key_extractor = es.KeyExtractor()
+        key_extractor = es.KeyExtractor(profileType="edmm")
         key_name, scale, key_strength = key_extractor(audio_44k)
         standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
         key_str = CAMELOT_MAP.get(standard_key, standard_key)
