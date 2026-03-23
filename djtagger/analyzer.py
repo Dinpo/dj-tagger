@@ -20,6 +20,7 @@ from .config import (
     ENERGY_OFFSET,
     SEGMENT_LENGTH_SEC,
     SEGMENT_HOP_SEC,
+    CAMELOT_MAP,
 )
 
 # ─── Genre label caches ──────────────────────────────────────
@@ -272,7 +273,8 @@ def analyze_track(filepath: str, models: dict) -> dict:
     try:
         key_extractor = es.KeyExtractor()
         key_name, scale, key_strength = key_extractor(audio_44k)
-        key_str = f"{key_name}{'m' if scale == 'minor' else ''}"
+        standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
+        key_str = CAMELOT_MAP.get(standard_key, standard_key)
         key_strength = round(float(key_strength), 3)
     except Exception:
         key_str = ""

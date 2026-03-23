@@ -59,6 +59,35 @@ def is_junk_genre(genre: str) -> bool:
         return True
     return False
 
+# ─── Camelot Key Mapping ──────────────────────────────────────
+
+CAMELOT_MAP = {
+    "Abm": "1A",  "G#m": "1A",
+    "Ebm": "2A",  "D#m": "2A",
+    "Bbm": "3A",  "A#m": "3A",
+    "Fm":  "4A",
+    "Cm":  "5A",
+    "Gm":  "6A",
+    "Dm":  "7A",
+    "Am":  "8A",
+    "Em":  "9A",
+    "Bm":  "10A",
+    "F#m": "11A", "Gbm": "11A",
+    "C#m": "12A", "Dbm": "12A",
+    "B":   "1B",
+    "F#":  "2B",  "Gb":  "2B",
+    "C#":  "3B",  "Db":  "3B",
+    "Ab":  "4B",  "G#":  "4B",
+    "Eb":  "5B",  "D#":  "5B",
+    "Bb":  "6B",  "A#":  "6B",
+    "F":   "7B",
+    "C":   "8B",
+    "G":   "9B",
+    "D":   "10B",
+    "A":   "11B",
+    "E":   "12B",
+}
+
 # ─── Network ────────────────────────────────────────────────
 
 BEATPORT_TIMEOUT = 8   # seconds (curl -m)
