@@ -90,6 +90,28 @@ CAMELOT_MAP = {
     "E":   "12B", "Emaj": "12B",
 }
 
+
+def camelot_distance(key1: str, key2: str) -> int | None:
+    """Compute distance between two Camelot keys (0 = same, 1 = compatible, etc.).
+
+    Returns None if either key is not valid Camelot notation.
+    Accounts for the circular wheel (12 wraps to 1) and A/B mode switches.
+    """
+    import re
+    pattern = re.compile(r"^(\d{1,2})([AB])$")
+    m1 = pattern.match(key1)
+    m2 = pattern.match(key2)
+    if not m1 or not m2:
+        return None
+    num1, mode1 = int(m1.group(1)), m1.group(2)
+    num2, mode2 = int(m2.group(1)), m2.group(2)
+    # Circular distance on the 1-12 wheel
+    circle_dist = min(abs(num1 - num2), 12 - abs(num1 - num2))
+    # Mode switch costs 1 step (A↔B at same number is compatible)
+    mode_dist = 0 if mode1 == mode2 else 1
+    return circle_dist + mode_dist
+
+
 # ─── Network ────────────────────────────────────────────────
 
 BEATPORT_TIMEOUT = 8   # seconds (curl -m)

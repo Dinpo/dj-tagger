@@ -2058,9 +2058,23 @@ def bench_bpm(
     console.print()
 
     # ─── Key Analysis ────────────────────────────────────
+    from .config import camelot_distance
+
     key_results = [r for r in results if r["serato_key"] and r["detected_key"]]
-    key_match = sum(1 for r in key_results if r["serato_key"] == r["detected_key"])
     key_total = len(key_results)
+
+    # Compute distances
+    dist_counts: dict[int, int] = {}
+    for r in key_results:
+        d = camelot_distance(r["serato_key"], r["detected_key"])
+        if d is not None:
+            dist_counts[d] = dist_counts.get(d, 0) + 1
+            r["key_dist"] = d
+        else:
+            r["key_dist"] = None
+
+    key_match = dist_counts.get(0, 0)
+    key_compat = key_match + dist_counts.get(1, 0)  # 0 or 1 step = harmonically compatible
 
     key_table = Table(
         box=box.ROUNDED, border_style="dim",
@@ -2069,15 +2083,52 @@ def bench_bpm(
     key_table.add_column("Metric", style="bold")
     key_table.add_column("Value", justify="right")
     key_table.add_row(
-        "Exact Camelot match",
+        "Exact match (0 steps)",
         f"[green]{key_match}[/green]/{key_total} ({key_match/key_total*100:.1f}%)" if key_total else "—",
     )
     key_table.add_row(
-        "Mismatch",
-        f"[yellow]{key_total - key_match}[/yellow]/{key_total} ({(key_total-key_match)/key_total*100:.1f}%)" if key_total else "—",
+        "Compatible (0-1 steps)",
+        f"[green]{key_compat}[/green]/{key_total} ({key_compat/key_total*100:.1f}%)" if key_total else "—",
+    )
+    key_table.add_row(
+        "Mismatch (>1 step)",
+        f"[yellow]{key_total - key_compat}[/yellow]/{key_total} ({(key_total-key_compat)/key_total*100:.1f}%)" if key_total else "—",
     )
     console.print(key_table)
     console.print()
+
+    # Distance distribution
+    if dist_counts:
+        dist_table = Table(
+            box=box.ROUNDED, border_style="dim",
+            title="Key Distance Distribution (Camelot steps)", title_style="bold",
+        )
+        dist_table.add_column("Steps", style="bold", justify="right")
+        dist_table.add_column("Count", justify="right")
+        dist_table.add_column("Bar")
+        dist_table.add_column("Meaning", style="dim")
+        max_dist_count = max(dist_counts.values())
+        meanings = {
+            0: "Exact match",
+            1: "Compatible (harmonic)",
+            2: "Near (energy boost mix)",
+            3: "Moderate",
+            4: "Distant",
+            5: "Far",
+            6: "Opposite",
+        }
+        for d in sorted(dist_counts.keys()):
+            c = dist_counts[d]
+            bar_len = int(c / max_dist_count * 25)
+            color = "green" if d <= 1 else "yellow" if d <= 3 else "red"
+            dist_table.add_row(
+                str(d),
+                str(c),
+                f"[{color}]{'█' * bar_len}[/{color}]",
+                meanings.get(d, ""),
+            )
+        console.print(dist_table)
+        console.print()
 
     # ─── BPM Mismatches ─────────────────────────────────
     bpm_mismatches: list[dict] = []
