@@ -159,6 +159,12 @@ def load_models(model_dir: str | None = None) -> dict:
         output="model/Softmax",
     )
 
+    # TempoCNN for precise BPM detection
+    models["tempo_cnn"] = _try_load(
+        es.TensorflowPredictTempoCNN,
+        f"{d}/deepsquare-k16-3.pb",
+    )
+
     # MusicNN pipeline (separate embedding model + emomusic head)
     models["musicnn_embed"] = _try_load(
         es.TensorflowPredictMusiCNN,
@@ -261,14 +267,29 @@ def analyze_track(filepath: str, models: dict) -> dict:
             (moods["happy"] - moods["sad"] + 1) / 2, 0, 1
         )), 3)
 
-    # ─── BPM + Key detection (DSP, no model needed) ──────
+    # ─── BPM detection (TempoCNN + DSP fallback) ─────────
+    bpm = 0
     try:
-        rhythm = es.RhythmExtractor2013(method="multifeature")
-        bpm_val, _, bpm_confidence, _, _ = rhythm(audio_44k)
-        bpm = round(float(bpm_val))
+        if models.get("tempo_cnn") is not None:
+            # TempoCNN: load at 11025 Hz, get probability over 256 BPM bins (30-286)
+            audio_11k = es.MonoLoader(filename=filepath, sampleRate=11025)()
+            tempo_preds = models["tempo_cnn"](audio_11k)
+            avg_preds = np.mean(tempo_preds, axis=0)
+            peak_bin = int(np.argmax(avg_preds))
+            # Weighted average around peak for sub-BPM precision
+            window = 5
+            lo = max(0, peak_bin - window)
+            hi = min(len(avg_preds), peak_bin + window + 1)
+            bpm = round(float(np.average(
+                np.arange(lo, hi) + 30, weights=avg_preds[lo:hi]
+            )), 1)
+        else:
+            # DSP fallback
+            rhythm = es.RhythmExtractor2013(method="multifeature")
+            bpm_val, _, _, _, _ = rhythm(audio_44k)
+            bpm = round(float(bpm_val), 1)
     except Exception:
         bpm = 0
-        bpm_confidence = 0.0
 
     try:
         key_extractor = es.KeyExtractor()
