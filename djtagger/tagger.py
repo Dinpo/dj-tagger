@@ -247,7 +247,7 @@ def fix_comments(filepath: str) -> bool:
             return False
         e_tag = tags.get("TXXX:ENERGY")
         v_tag = tags.get("TXXX:VALENCE")
-        if not e_tag or not v_tag:
+        if not e_tag or not e_tag.text or not v_tag or not v_tag.text:
             return False
 
         e = float(e_tag.text[0])

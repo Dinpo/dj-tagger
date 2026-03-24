@@ -750,8 +750,6 @@ def stats(
 
     # ─── Genre × Energy breakdown ───────────────────────────
     if genre_energies:
-        import numpy as np
-
         ge_table = Table(
             box=box.ROUNDED, border_style="dim",
             title="Genre Energy Profile (top 15)", title_style="bold",
@@ -1541,7 +1539,6 @@ def clean_genres(
             genre = tags.get("genre", "")
             if genre and is_junk_genre(genre):
                 junk_found += 1
-                artist = tags.get("genre", "")
                 fname = os.path.basename(mp3)
 
                 if dry_run:
