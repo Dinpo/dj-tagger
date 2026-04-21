@@ -86,12 +86,14 @@ def _log_error(filepath: str, msg: str) -> None:
 
 SOURCE_COLORS = {
     "beatport": "green",
+    "musicbrainz": "magenta",
     "lastfm+ml": "yellow",
     "ml": "blue",
 }
 
 SOURCE_ICONS = {
     "beatport": "🟢",
+    "musicbrainz": "🟣",
     "lastfm+ml": "🟡",
     "ml": "🔵",
 }
@@ -118,12 +120,14 @@ def _make_stats_panel(
 
     # Genre sources
     bp = genre_sources.get("beatport", 0)
+    mb = genre_sources.get("musicbrainz", 0)
     fm = genre_sources.get("lastfm+ml", 0)
     ml = genre_sources.get("ml", 0)
     lines.append(
-        f"  🟢 Beatport  [bold green]{bp:>4}[/bold green]"
-        f"   🟡 Last.fm+ML  [bold yellow]{fm:>4}[/bold yellow]"
-        f"   🔵 ML-only  [bold blue]{ml:>4}[/bold blue]"
+        f"  🟢 Beatport [bold green]{bp:>4}[/bold green]"
+        f"   🟣 MusicBrainz [bold magenta]{mb:>4}[/bold magenta]"
+        f"   🟡 Last.fm+ML [bold yellow]{fm:>4}[/bold yellow]"
+        f"   🔵 ML-only [bold blue]{ml:>4}[/bold blue]"
     )
     lines.append("")
 
@@ -167,9 +171,11 @@ def _make_summary_table(
     table.add_row("", "")
 
     bp = genre_sources.get("beatport", 0)
+    mb = genre_sources.get("musicbrainz", 0)
     fm = genre_sources.get("lastfm+ml", 0)
     ml = genre_sources.get("ml", 0)
     table.add_row("🟢 Beatport", f"[green]{bp}[/green]")
+    table.add_row("🟣 MusicBrainz", f"[magenta]{mb}[/magenta]")
     table.add_row("🟡 Last.fm+ML", f"[yellow]{fm}[/yellow]")
     table.add_row("🔵 ML-only", f"[blue]{ml}[/blue]")
     table.add_row("", "")
@@ -206,6 +212,10 @@ def tag(
     dry_run: bool = typer.Option(False, "--dry-run", help="Analyze without writing tags"),
     force: bool = typer.Option(False, "--force", help="Re-tag already tagged files"),
     no_beatport: bool = typer.Option(False, "--no-beatport", help="Skip Beatport lookups"),
+    no_musicbrainz: bool = typer.Option(
+        False, "--no-musicbrainz",
+        help="Skip MusicBrainz lookups (off by default; MB is throttled to 1 req/sec)",
+    ),
     fix_comments: bool = typer.Option(
         False, "--fix-comments", help="Update comments on already-tagged files (no re-analysis)"
     ),
@@ -229,7 +239,10 @@ def tag(
     _err_fh = open(ERROR_FILE, "w")
 
     try:
-        _tag_inner(path, dry_run, force, no_beatport, fix_comments, detect_bpm_key)
+        _tag_inner(
+            path, dry_run, force, no_beatport, no_musicbrainz,
+            fix_comments, detect_bpm_key,
+        )
     finally:
         _cleanup()
 
@@ -239,13 +252,14 @@ def _tag_inner(
     dry_run: bool,
     force: bool,
     no_beatport: bool,
+    no_musicbrainz: bool,
     fix_comments: bool,
     detect_bpm_key: bool,
 ) -> None:
     """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
     from .analyzer import analyze_track, load_models
-    from .genres import resolve_genres
+    from .genres import resolve_metadata
     from .scanner import filter_untagged, find_mp3s
     from .tagger import fix_comments as do_fix_comments
     from .tagger import parse_filename, write_tags
@@ -334,7 +348,7 @@ def _tag_inner(
         processed=0,
         failed=0,
         current="",
-        genre_sources={"beatport": 0, "lastfm+ml": 0, "ml": 0},
+        genre_sources={"beatport": 0, "musicbrainz": 0, "lastfm+ml": 0, "ml": 0},
         started=time.strftime("%Y-%m-%d %H:%M:%S"),
         avg_seconds=0,
         eta_hours=0,
@@ -357,7 +371,7 @@ def _tag_inner(
     results: list[dict] = []
     failed = 0
     start_time = time.time()
-    genre_sources: dict[str, int] = {"beatport": 0, "lastfm+ml": 0, "ml": 0}
+    genre_sources: dict[str, int] = {"beatport": 0, "musicbrainz": 0, "lastfm+ml": 0, "ml": 0}
 
     progress = Progress(
         SpinnerColumn(),
@@ -404,32 +418,42 @@ def _tag_inner(
                 progress.update(task_id, completed=i)
                 continue
 
-            # Resolve genre
+            # Resolve genre + album/year
             try:
-                final_genres, genre_source = resolve_genres(
+                meta = resolve_metadata(
                     artist,
                     artist_clean,
                     title,
                     result["genres"],
                     ml_electronic_genres=result.get("electronic_genres"),
                     use_beatport=not no_beatport,
+                    use_musicbrainz=not no_musicbrainz,
                     genre_keep_prob=GENRE_KEEP_PROB,
                 )
+                final_genres = meta["genres"]
+                genre_source = meta["source"]
+                album = meta.get("album", "")
+                year = meta.get("year", "")
             except Exception as ex:
                 _log(f"  ⚠ Genre resolution failed: {ex}")
-                final_genres, genre_source = [], "ml"
+                final_genres, genre_source, album, year = [], "ml", "", ""
 
             src_icon = SOURCE_ICONS.get(genre_source, "")
             src_color = SOURCE_COLORS.get(genre_source, "white")
             genre_str = "; ".join(final_genres[:4]) if final_genres else "(none)"
+            album_log = f" | Album: {album}" if album else ""
+            year_log = f" ({year})" if year else ""
             _log(
-                f"  Genre: {genre_str} [{genre_source}] "
-                f"| E:{result['energy']:.2f} V:{result['valence']:.2f}"
+                f"  Genre: {genre_str} [{genre_source}]{album_log}{year_log}"
+                f" | E:{result['energy']:.2f} V:{result['valence']:.2f}"
             )
 
             # Write tags
             if not dry_run:
-                ok, genre_action = write_tags(mp3, result, genre_source, final_genres)
+                ok, genre_action = write_tags(
+                    mp3, result, genre_source, final_genres,
+                    album=album, year=year,
+                )
                 if ok:
                     _log(f"  ✅ Tagged (TCON: {genre_action})")
                 else:
@@ -1661,7 +1685,7 @@ def fix_audit(
     if needs_ml or any("missing BPM" in f["issues"] or "no key" in f["issues"] for f in fixable):
         console.print("[dim]Loading analysis models...[/dim]")
         from .analyzer import analyze_track, load_models
-        from .genres import resolve_genres
+        from .genres import resolve_metadata
         from .tagger import write_tags, parse_filename
         from .config import GENRE_KEEP_PROB
 
@@ -1692,19 +1716,28 @@ def fix_audit(
                 artist, artist_clean, title = parse_filename(path)
                 result = analyze_track(path, models, detect_bpm_key=True)
 
-                # Resolve genre if needed
+                # Resolve genre + album/year if needed
+                album = ""
+                year = ""
                 if "no genre" in issues:
-                    final_genres, genre_source = resolve_genres(
+                    meta = resolve_metadata(
                         artist, artist_clean, title,
                         result["genres"],
                         ml_electronic_genres=result.get("electronic_genres"),
                         use_beatport=True,
                         genre_keep_prob=GENRE_KEEP_PROB,
                     )
+                    final_genres = meta["genres"]
+                    genre_source = meta["source"]
+                    album = meta.get("album", "")
+                    year = meta.get("year", "")
                 else:
                     final_genres, genre_source = [], "ml"
 
-                ok, action = write_tags(path, result, genre_source, final_genres)
+                ok, action = write_tags(
+                    path, result, genre_source, final_genres,
+                    album=album, year=year,
+                )
                 if ok:
                     fixes = []
                     if "missing BPM" in issues:
@@ -1714,6 +1747,10 @@ def fix_audit(
                     if "no genre" in issues:
                         genre_str = "; ".join(final_genres[:3]) if final_genres else "(none)"
                         fixes.append(f"Genre: {genre_str} [{genre_source}]")
+                    if album:
+                        fixes.append(f"Album: {album}")
+                    if year:
+                        fixes.append(f"Year: {year}")
                     console.print(f"  [green]✓[/green] {', '.join(fixes)}\n")
                     fixed_count += 1
                 else:
@@ -1744,16 +1781,24 @@ def fix_audit(
 
                 if "no genre" in issues:
                     artist, artist_clean, title = parse_filename(path)
-                    final_genres, genre_source = resolve_genres(
+                    meta = resolve_metadata(
                         artist, artist_clean, title,
                         result["genres"],
                         ml_electronic_genres=result.get("electronic_genres"),
                         use_beatport=True,
                         genre_keep_prob=GENRE_KEEP_PROB,
                     )
+                    final_genres = meta["genres"]
+                    genre_source = meta["source"]
                     if final_genres:
                         audio.tags["\xa9gen"] = ["; ".join(final_genres[:3])]
                         fixes.append(f"Genre: {'; '.join(final_genres[:3])} [{genre_source}]")
+                    if meta.get("album"):
+                        audio.tags["\xa9alb"] = [meta["album"]]
+                        fixes.append(f"Album: {meta['album']}")
+                    if meta.get("year"):
+                        audio.tags["\xa9day"] = [meta["year"]]
+                        fixes.append(f"Year: {meta['year']}")
 
                 if fixes:
                     audio.save()

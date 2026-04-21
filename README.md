@@ -2,7 +2,7 @@
 
 **Autonomous DJ music tagger powered by machine learning.**
 
-Analyzes MP3 files using [Essentia](https://essentia.upf.edu/) TensorFlow models and enriches them with genre, energy, and mood metadata — written directly as ID3 tags. Genre detection combines three sources in priority order: Beatport (human-curated), Last.fm (artist tags), and local ML predictions.
+Analyzes MP3 files using [Essentia](https://essentia.upf.edu/) TensorFlow models and enriches them with genre, energy, and mood metadata — written directly as ID3 tags. Genre detection combines four sources in priority order: Beatport (human-curated, track-level), MusicBrainz (track-level community/curated tags), Last.fm (artist tags), and local ML predictions. Beatport also fills empty album / year fields when a match is found.
 
 Designed to run unattended on large collections. No LLM calls, no cloud APIs for audio — everything runs locally except lightweight genre lookups.
 
@@ -47,7 +47,8 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 ## Features
 
 - **ML audio analysis** — Energy, valence, and 4 mood dimensions per track
-- **3-tier genre resolution** — Beatport → Last.fm → Essentia ML fallback
+- **4-tier genre resolution** — Beatport → MusicBrainz → Last.fm → Essentia ML fallback
+- **Album + year** — filled from Beatport; empty / junk values (URL spam, non-year) are replaced, legit values preserved
 - **Remix-aware matching** — Scores Beatport results to find the right version
 - **Non-destructive** — Preserves existing genres, Serato cues, rekordbox data, BPM, key
 - **Rich CLI** — Live progress, stats dashboard, and color-coded output via [Rich](https://rich.readthedocs.io/)
@@ -159,7 +160,9 @@ djtagger tag /path/to/music --fix-comments
 |------|-------------|
 | `--dry-run` | Analyze files and resolve genres but don't write any tags |
 | `--force` | Re-tag files even if they already have a `GENRE_SOURCE` tag |
-| `--no-beatport` | Skip Beatport scraping; use Last.fm + ML only |
+| `--no-beatport` | Skip Beatport scraping; use MusicBrainz + Last.fm + ML only |
+| `--no-musicbrainz` | Skip MusicBrainz lookups (throttled to 1 req/sec; on by default) |
+| `--detect-bpm-key` | Also detect BPM and key (off by default — DJ software usually owns these) |
 | `--fix-comments` | Regenerate `COMM` tags from existing energy/valence values (no ML re-analysis) |
 
 If no path is given, it defaults to the current directory (or `DJTAGGER_MUSIC_PATH`).
@@ -258,7 +261,7 @@ djtagger find /music --sort valence --limit 20
 | `--mood-sad` | Sad score range |
 | `--mood-aggressive` | Aggressive score range |
 | `--mood-relaxed` | Relaxed score range |
-| `--source`, `-s` | Filter by genre source (`beatport`, `lastfm+ml`, `ml`) |
+| `--source`, `-s` | Filter by genre source (`beatport`, `musicbrainz`, `lastfm+ml`, `ml`) |
 | `--untagged` | Show only untagged tracks |
 | `--sort` | Sort by: `energy`, `valence`, `genre`, `artist`, `title`, `path` (default: `energy`) |
 | `--reverse`, `-r` | Reverse sort order |
@@ -375,7 +378,7 @@ The ` - ` separator (space-dash-space) splits artist from title. If no separator
 3. **Genre prediction** — Embeddings feed into a 400-class Discogs genre classification head; predictions are averaged across time frames, and the top 5 genres above a minimum probability threshold (default 0.05) are kept
 4. **Mood prediction** — Embeddings feed into 4 independent mood classification heads (happy, sad, aggressive, relaxed), each producing a score from 0 to 1
 5. **Composite metrics** — Energy and valence are derived from the mood scores (see formulas below)
-6. **Genre resolution** — The 3-tier lookup (Beatport → Last.fm → ML) determines the final genre
+6. **Genre resolution** — The 3-tier lookup (Beatport → MusicBrainz → Last.fm → ML) determines the final genre
 7. **Tag writing** — Results are written as ID3 tags, preserving all existing non-DJ-Tagger tags
 
 ### Energy and Valence Formulas
@@ -447,7 +450,9 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Sad | `TXXX:MOOD_SAD` | Score 0–1 | Raw ML prediction |
 | Aggressive | `TXXX:MOOD_AGGRESSIVE` | Score 0–1 | Raw ML prediction |
 | Relaxed | `TXXX:MOOD_RELAXED` | Score 0–1 | Raw ML prediction |
-| Genre source | `TXXX:GENRE_SOURCE` | `beatport`, `lastfm+ml`, or `ml` | Which tier provided the genre |
+| Genre source | `TXXX:GENRE_SOURCE` | `beatport`, `musicbrainz`, `lastfm+ml`, or `ml` | Which tier provided the genre |
+| Album | `TALB` | e.g. `Offender Remixes` | Filled from Beatport; replaces empty or URL/promo-junk existing values, preserves legit ones |
+| Year | `TDRC` | e.g. `2022` | Filled from Beatport; replaces invalid-year existing values, preserves valid years |
 | Genre detected | `TXXX:GENRE_DETECTED` | Full detected genre string | Stored even if TCON was preserved |
 | Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v5` | For tracking re-tag needs |
 | Comment | `COMM::eng` | `Energy: High \| Mood: Bright \| Edge: Hard \| Peak: 0.98 \| Intro: Hot \| Dance: High` | Human-readable, visible in Serato/rekordbox |
@@ -593,7 +598,7 @@ analyzer.load_models()       → load 6 TensorFlow models into memory once
   For each MP3:
     tagger.parse_filename()  → extract artist + title from filename
     analyzer.analyze_track() → ML embeddings → genre predictions + mood scores
-    genres.resolve_genres()  → Beatport → Last.fm → ML fallback
+    genres.resolve_genres()  → Beatport → MusicBrainz → Last.fm → ML fallback
     tagger.write_tags()      → write ID3 tags, preserving existing data
 ```
 

@@ -59,6 +59,41 @@ def is_junk_genre(genre: str) -> bool:
         return True
     return False
 
+
+def is_junk_album(album: str) -> bool:
+    """Check if an album string looks like URL/promo spam rather than a real release.
+
+    Reuses the same URL/domain patterns used for junk-genre detection, and also
+    flags unreasonably long strings (typically promo copy rather than titles).
+    """
+    if not album:
+        return False
+    a = album.lower().strip()
+    if any(pat in a for pat in JUNK_GENRE_PATTERNS):
+        return True
+    if len(album) > 120:
+        return True
+    return False
+
+
+def is_valid_year(year: str) -> bool:
+    """Check if a year string is a plausible release year (1950–2030).
+
+    Accepts the first 4-digit year found in the string, so values like
+    "2019-04-12" or "2022 / Ultra Records" still pass.
+    """
+    if not year:
+        return False
+    import re
+    m = re.search(r"(19|20)\d{2}", year)
+    if not m:
+        return False
+    try:
+        y = int(m.group(0))
+    except ValueError:
+        return False
+    return 1950 <= y <= 2030
+
 # ─── Camelot Key Mapping ──────────────────────────────────────
 
 CAMELOT_MAP = {

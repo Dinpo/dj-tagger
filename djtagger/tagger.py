@@ -3,9 +3,15 @@
 import os
 import re
 
-from mutagen.id3 import ID3, TXXX, TCON, TBPM, TKEY, COMM, ID3NoHeaderError
+from mutagen.id3 import ID3, TXXX, TCON, TBPM, TKEY, COMM, TALB, TDRC, ID3NoHeaderError
 
-from .config import GENERIC_GENRES, TAGGER_VERSION, is_junk_genre
+from .config import (
+    GENERIC_GENRES,
+    TAGGER_VERSION,
+    is_junk_album,
+    is_junk_genre,
+    is_valid_year,
+)
 
 # ─── Read helpers ───────────────────────────────────────────
 
@@ -158,10 +164,17 @@ def write_tags(
     result: dict,
     genre_source: str,
     genre_list: list[str],
+    album: str = "",
+    year: str = "",
 ) -> tuple[bool, str]:
     """Write analysis results as ID3 tags.
 
     Returns (success, genre_action_description).
+
+    *album* and *year* are optional — when passed, they are written to TALB /
+    TDRC respectively, but only if the existing frame is empty or looks like
+    junk (URL/promo spam for album; non-year for year). Legitimate existing
+    values are preserved.
     """
     try:
         try:
@@ -240,6 +253,26 @@ def write_tags(
             if not existing_key or not existing_key[0].text or not existing_key[0].text[0].strip():
                 tags.delall("TKEY")
                 tags.add(TKEY(encoding=3, text=[str(result["key"])]))
+
+        # Album — fill if empty or replace if junk; never overwrite a legit value
+        if album:
+            existing_album = ""
+            talb = tags.getall("TALB")
+            if talb and talb[0].text:
+                existing_album = str(talb[0].text[0]).strip()
+            if not existing_album or is_junk_album(existing_album):
+                tags.delall("TALB")
+                tags.add(TALB(encoding=3, text=[album]))
+
+        # Year — fill if empty or replace if not a plausible year
+        if year:
+            existing_year = ""
+            tdrc = tags.getall("TDRC")
+            if tdrc and tdrc[0].text:
+                existing_year = str(tdrc[0].text[0]).strip()
+            if not existing_year or not is_valid_year(existing_year):
+                tags.delall("TDRC")
+                tags.add(TDRC(encoding=3, text=[year]))
 
         tags.save(filepath)
         return True, genre_action
