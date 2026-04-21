@@ -28,7 +28,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
   - [3-Tier Genre Resolution](#3-tier-genre-resolution)
   - [Remix-Aware Matching](#remix-aware-matching)
 - [ID3 Tags Written](#id3-tags-written)
-  - [Genre Preservation](#genre-preservation)
+  - [Genre Resolution Rules](#genre-resolution-rules)
   - [Comment Format](#comment-format)
 - [Configuration](#configuration)
   - [Environment Variables](#environment-variables)
@@ -460,11 +460,22 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 
 All other existing ID3 frames (BPM, key, Serato cues, artwork, etc.) are left untouched.
 
-### Genre Preservation
+### Genre Resolution Rules
 
-Existing non-generic genres are **never overwritten**. If a track already has `"Drum and Bass"` as its genre, DJ Tagger keeps it and stores its own detection in `TXXX:GENRE_DETECTED` for reference.
+When writing the `TCON` (Genre) frame, DJ Tagger compares the existing value against what Beatport / MusicBrainz / Last.fm / ML proposes, tokenizes both (case-insensitive, normalising `/`, `;`, `,`, `&`, `and`), and picks one of these actions:
 
-Only these generic/empty values get replaced: `Other`, `Unknown`, `Misc`, `Music`, `""` (empty).
+| Existing vs proposed | Action |
+|----------------------|--------|
+| existing empty | **fill** with proposed |
+| existing is junk (URL/promo spam) | **replace** with proposed |
+| token-identical | **keep** existing (preserve original formatting) |
+| existing ⊂ proposed (more specific) | **upgrade** (e.g. `House` → `Deep House`) |
+| proposed ⊂ existing | **keep** existing (don't downgrade) |
+| disjoint or partial overlap | **merge** — append proposed genres, deduped at token level, capped at 5 total |
+
+The merge rule means a Coldplay rock/house crossover ending up with `Rock; Alternative; Britpop; House; Dance / Pop` — searchable under every tag, nothing lost.
+
+Regardless of what ends up in `TCON`, the full detected genre string is always also stored in `TXXX:GENRE_DETECTED` for audit. Generic values like `Other`, `Unknown`, `Misc`, `Music`, and empty strings are treated as junk for replacement purposes.
 
 ### Comment Format
 

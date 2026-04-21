@@ -126,6 +126,69 @@ def read_tags(filepath: str) -> dict:
 # ─── Write tags ─────────────────────────────────────────────
 
 
+def _genre_tokens(s: str) -> set[str]:
+    """Tokenize a genre string, normalizing separators/punctuation/casing.
+
+    "Dance / Pop", "Dance; Pop", and "Dance & Pop" all produce {"dance", "pop"}.
+    The word "and" is dropped so "Drum and Bass" ≡ "Drum & Bass".
+    """
+    parts = re.split(r"[\s;/&,\-]+", s.lower())
+    return {p.strip("()[]{}") for p in parts if p and p != "and"}
+
+
+def _merge_genres(
+    existing: str,
+    proposed: list[str],
+    max_total: int = 5,
+) -> tuple[str, str]:
+    """Decide the TCON value to write based on existing vs proposed genres.
+
+    Rules:
+        - proposed empty → keep existing
+        - existing empty or junk → replace with proposed
+        - token-identical → keep existing (preserve original formatting)
+        - existing ⊂ proposed (strictly more specific) → upgrade to proposed
+        - proposed ⊂ existing → keep (don't downgrade specificity)
+        - disjoint or partial overlap → merge deduped, capped at max_total
+
+    Returns (new_tcon, action_label). If new_tcon == existing, caller should
+    skip the write. action_label describes what happened for the log.
+    """
+    if not proposed:
+        return existing, "no-proposed"
+
+    proposed_str = "; ".join(proposed[:4])
+
+    if not existing:
+        return proposed_str, "filled"
+
+    if is_junk_genre(existing):
+        return proposed_str, f"replaced junk '{existing}'"
+
+    e_tokens = _genre_tokens(existing)
+    p_tokens = _genre_tokens(proposed_str)
+
+    if e_tokens == p_tokens:
+        return existing, "matches"
+    if e_tokens < p_tokens:
+        return proposed_str, f"upgraded '{existing}' → '{proposed_str}'"
+    if p_tokens < e_tokens:
+        return existing, f"kept more-specific '{existing}'"
+
+    # Disjoint or partial overlap — merge, deduped at token level
+    existing_items = [g.strip() for g in re.split(r";", existing) if g.strip()]
+    merged = existing_items[:]
+    for p in proposed:
+        pt = _genre_tokens(p)
+        if any(_genre_tokens(m) == pt for m in merged):
+            continue
+        merged.append(p)
+    merged_str = "; ".join(merged[:max_total])
+    if merged_str == existing:
+        return existing, "matches"
+    return merged_str, f"merged '{existing}' + '{proposed_str}'"
+
+
 def _build_comment(
     energy: float,
     valence: float,
@@ -189,15 +252,10 @@ def write_tags(
             existing_genre = tcon[0].text[0].strip()
 
         if genre_list:
-            genre_str = "; ".join(genre_list[:4])
-            if not existing_genre or is_junk_genre(existing_genre):
+            new_genre, genre_action = _merge_genres(existing_genre, genre_list)
+            if new_genre != existing_genre:
                 tags.delall("TCON")
-                tags.add(TCON(encoding=3, text=[genre_str]))
-                genre_action = "replaced"
-            elif existing_genre.lower() != genre_str.lower():
-                genre_action = f"kept '{existing_genre}'"
-            else:
-                genre_action = "matches"
+                tags.add(TCON(encoding=3, text=[new_genre]))
         else:
             genre_action = "no genre"
 
