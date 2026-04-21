@@ -53,7 +53,7 @@ def scan_library(
         # Numeric fields — convert to float or None
         for key in ("energy", "valence", "mood_happy", "mood_sad",
                      "mood_aggressive", "mood_relaxed",
-                     "danceability", "mood_party", "arousal",
+                     "danceability", "arousal",
                      "peak_energy", "intro_energy", "energy_variance"):
             raw = tags.get(key, "")
             record[key] = float(raw) if raw else None

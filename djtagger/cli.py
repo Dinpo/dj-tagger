@@ -209,6 +209,10 @@ def tag(
     fix_comments: bool = typer.Option(
         False, "--fix-comments", help="Update comments on already-tagged files (no re-analysis)"
     ),
+    detect_bpm_key: bool = typer.Option(
+        False, "--detect-bpm-key",
+        help="Also detect BPM and key (off by default — DJ software usually owns these)",
+    ),
 ) -> None:
     """Tag MP3 files with genre, energy, and mood metadata."""
     global _log_fh, _err_fh
@@ -225,7 +229,7 @@ def tag(
     _err_fh = open(ERROR_FILE, "w")
 
     try:
-        _tag_inner(path, dry_run, force, no_beatport, fix_comments)
+        _tag_inner(path, dry_run, force, no_beatport, fix_comments, detect_bpm_key)
     finally:
         _cleanup()
 
@@ -236,6 +240,7 @@ def _tag_inner(
     force: bool,
     no_beatport: bool,
     fix_comments: bool,
+    detect_bpm_key: bool,
 ) -> None:
     """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
@@ -253,6 +258,7 @@ def _tag_inner(
         console.print(f"Found [bold]{len(all_mp3s)}[/bold] MP3 files")
 
         fixed = 0
+        skipped_untagged = 0
         errors = 0
         with Progress(
             SpinnerColumn(),
@@ -264,14 +270,25 @@ def _tag_inner(
         ) as progress:
             task = progress.add_task("Fixing comments", total=len(all_mp3s))
             for mp3 in all_mp3s:
-                ok = do_fix_comments(mp3)
-                if ok:
+                status = do_fix_comments(mp3)
+                if status == "fixed":
                     fixed += 1
+                elif status == "error":
+                    errors += 1
+                    _log_error(mp3, "fix-comments: read or write failed")
+                else:
+                    skipped_untagged += 1
                 progress.advance(task)
 
+        error_suffix = (
+            f", [bold red]{errors}[/bold red] errors (see {ERROR_FILE})"
+            if errors
+            else ""
+        )
         console.print(
             f"\n[bold green]✅ Done![/bold green] Fixed [bold]{fixed}[/bold] comments, "
-            f"skipped [dim]{len(all_mp3s) - fixed}[/dim] untagged files"
+            f"skipped [dim]{skipped_untagged}[/dim] untagged files"
+            + error_suffix
         )
         return
 
@@ -379,7 +396,7 @@ def _tag_inner(
 
             # Analyze
             try:
-                result = analyze_track(mp3, models)
+                result = analyze_track(mp3, models, detect_bpm_key=detect_bpm_key)
             except Exception as ex:
                 _log(f"  ⚠ Analysis failed: {ex}")
                 _log_error(mp3, f"Analysis: {ex}")
@@ -541,9 +558,6 @@ def info(
     if tags.get("arousal"):
         a = float(tags["arousal"])
         table.add_row("Arousal", f"{_mini_bar(a)}  {a:.3f}")
-    if tags.get("mood_party"):
-        p = float(tags["mood_party"])
-        table.add_row("Party", f"{_mini_bar(p)}  {p:.3f}")
     table.add_row("", "")
 
     # Segment energy
@@ -1051,7 +1065,7 @@ def export(
         "path", "artist", "title", "folder", "genre", "genre_source",
         "genre_detected", "energy", "valence", "danceability", "arousal",
         "mood_happy", "mood_sad", "mood_aggressive", "mood_relaxed",
-        "mood_party", "peak_energy", "intro_energy", "energy_variance",
+        "peak_energy", "intro_energy", "energy_variance",
         "tagger_version", "comment",
     ]
 
@@ -1243,14 +1257,14 @@ def _suggest_curve(tracks: list[dict], curve: str, count: int) -> None:
 
 def _suggest_diverse(tracks: list[dict], count: int) -> None:
     """Suggest a diverse mix of tracks across energy levels."""
-    import numpy as np
-
-    # Pick tracks spread evenly across the energy range
     sorted_by_energy = sorted(tracks, key=lambda t: t["energy"] or 0)
-    step = max(1, len(sorted_by_energy) // count)
-    selected = sorted_by_energy[::step][:count]
-    # Sort selected by energy for nice display
-    selected.sort(key=lambda t: t["energy"] or 0)
+    n = len(sorted_by_energy)
+    if n <= count:
+        selected = sorted_by_energy[:]
+    else:
+        # Evenly-spaced indices across the full range (endpoints included)
+        indices = [i * (n - 1) // (count - 1) for i in range(count)] if count > 1 else [0]
+        selected = [sorted_by_energy[i] for i in indices]
 
     console.print(f"\n[bold cyan]🎲 Diverse selection[/bold cyan] — {len(selected)} tracks across energy range\n")
     _print_suggestion_table(selected, show_index=True, energy_bar=True)
@@ -1578,10 +1592,6 @@ def clean_genres(
 @app.command("fix-audit")
 def fix_audit(
     report: str = typer.Argument("/tmp/audit-report.json", help="Path to audit report JSON"),
-    fix_filenames: bool = typer.Option(
-        False, "--fix-filenames",
-        help="Also rename files with no artist (requires Serato relinking after)",
-    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be fixed without writing"),
 ) -> None:
     """Fix issues from a serato-reader audit report (BPM, key, genre gaps)."""
@@ -1621,7 +1631,7 @@ def fix_audit(
             console.print(f"  [red]✗[/red] [dim]File not found: {os.path.basename(path)}[/dim]")
             continue
 
-        if "no artist" in issues and not fix_filenames:
+        if "no artist" in issues:
             skipped_filename.append(t)
             issues.discard("no artist")
 
@@ -1640,7 +1650,7 @@ def fix_audit(
         if skipped_format:
             console.print(f"[dim]  {len(skipped_format)} tracks in unsupported formats (WAV)[/dim]")
         if skipped_filename:
-            console.print(f"[dim]  {len(skipped_filename)} tracks need filename fix (use --fix-filenames)[/dim]")
+            console.print(f"[dim]  {len(skipped_filename)} tracks need filename fix (rename manually — Serato relinking required)[/dim]")
         console.print()
         return
 
@@ -1680,7 +1690,7 @@ def fix_audit(
         if ext == ".mp3" and models is not None:
             try:
                 artist, artist_clean, title = parse_filename(path)
-                result = analyze_track(path, models)
+                result = analyze_track(path, models, detect_bpm_key=True)
 
                 # Resolve genre if needed
                 if "no genre" in issues:
@@ -1716,7 +1726,7 @@ def fix_audit(
             try:
                 from mutagen.mp4 import MP4
 
-                result = analyze_track(path, models) if models else None
+                result = analyze_track(path, models, detect_bpm_key=True) if models else None
                 if result is None:
                     console.print(f"  [red]✗[/red] Models not loaded\n")
                     continue
@@ -1758,7 +1768,7 @@ def fix_audit(
     if skipped_filename:
         console.print(
             f"[dim]Skipped {len(skipped_filename)} filename issues "
-            f"(use --fix-filenames to rename)[/dim]"
+            f"(rename manually — Serato relinking required)[/dim]"
         )
     console.print()
 

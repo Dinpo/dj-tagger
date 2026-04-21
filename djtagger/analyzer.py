@@ -152,12 +152,6 @@ def load_models(model_dir: str | None = None) -> dict:
         input="model/Placeholder",
         output="model/Softmax",
     )
-    models["mood_party"] = _try_load(
-        es.TensorflowPredict2D,
-        f"{d}/mood_party-discogs-effnet-1.pb",
-        input="model/Placeholder",
-        output="model/Softmax",
-    )
 
     # TempoCNN for precise BPM detection
     models["tempo_cnn"] = _try_load(
@@ -183,15 +177,23 @@ def load_models(model_dir: str | None = None) -> dict:
 
 # ─── Analyze a Single Track ─────────────────────────────────
 
-def analyze_track(filepath: str, models: dict) -> dict:
+def analyze_track(
+    filepath: str,
+    models: dict,
+    detect_bpm_key: bool = False,
+) -> dict:
     """Run ML analysis on an audio file.
 
+    When *detect_bpm_key* is False (default), BPM/key detection is skipped
+    and the returned ``bpm`` / ``key`` fields are 0 / "". This avoids
+    overwriting values a DJ tool (Serato etc.) has already written, and
+    also skips the 44.1 kHz audio load that only those algorithms need.
+
     Returns dict with keys: genres, electronic_genres, moods, danceability,
-    mood_party, arousal, valence, energy, raw_energy, peak_energy,
-    intro_energy, energy_variance, duration.
+    arousal, valence, energy, raw_energy, peak_energy, intro_energy,
+    energy_variance, bpm, key, key_strength, duration.
     """
     audio = es.MonoLoader(filename=filepath, sampleRate=16000)()
-    audio_44k = es.MonoLoader(filename=filepath, sampleRate=44100)()
     embeddings = models["embed"](audio)
 
     # ─── Genre predictions (Discogs 400-class) ──────────────
@@ -234,15 +236,6 @@ def analyze_track(filepath: str, models: dict) -> dict:
             (moods["happy"] + moods["aggressive"] + (1 - moods["sad"])) / 3, 0, 1
         )), 3)
 
-    # ─── Party mood ─────────────────────────────────────────
-    if models.get("mood_party") is not None:
-        party_preds = models["mood_party"](embeddings)
-        mood_party = round(float(np.mean(party_preds, axis=0)[0]), 3)
-    else:
-        mood_party = round(float(np.clip(
-            (moods["happy"] + moods["aggressive"]) / 2, 0, 1
-        )), 3)
-
     # ─── Arousal/Valence from emomusic (MusicNN) ───────────
     has_emomusic = (
         models.get("musicnn_embed") is not None
@@ -267,39 +260,47 @@ def analyze_track(filepath: str, models: dict) -> dict:
             (moods["happy"] - moods["sad"] + 1) / 2, 0, 1
         )), 3)
 
-    # ─── BPM detection (TempoCNN + DSP fallback) ─────────
+    # ─── BPM + Key (opt-in: DJ software usually owns these) ──
     bpm = 0
-    try:
-        if models.get("tempo_cnn") is not None:
-            # TempoCNN: load at 11025 Hz, get probability over 256 BPM bins (30-286)
-            audio_11k = es.MonoLoader(filename=filepath, sampleRate=11025)()
-            tempo_preds = models["tempo_cnn"](audio_11k)
-            avg_preds = np.mean(tempo_preds, axis=0)
-            peak_bin = int(np.argmax(avg_preds))
-            # Weighted average around peak for sub-BPM precision
-            window = 5
-            lo = max(0, peak_bin - window)
-            hi = min(len(avg_preds), peak_bin + window + 1)
-            bpm = round(float(np.average(
-                np.arange(lo, hi) + 30, weights=avg_preds[lo:hi]
-            )), 2)
-        else:
-            # DSP fallback
-            rhythm = es.RhythmExtractor2013(method="multifeature")
-            bpm_val, _, _, _, _ = rhythm(audio_44k)
-            bpm = round(float(bpm_val), 2)
-    except Exception:
-        bpm = 0
+    key_str = ""
+    key_strength = 0.0
+    if detect_bpm_key:
+        audio_44k = None  # loaded lazily — only if something below needs it
 
-    try:
-        key_extractor = es.KeyExtractor(profileType="edmm")
-        key_name, scale, key_strength = key_extractor(audio_44k)
-        standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
-        key_str = CAMELOT_MAP.get(standard_key, standard_key)
-        key_strength = round(float(key_strength), 3)
-    except Exception:
-        key_str = ""
-        key_strength = 0.0
+        try:
+            if models.get("tempo_cnn") is not None:
+                # TempoCNN: load at 11025 Hz, probability over 256 BPM bins (30-286)
+                audio_11k = es.MonoLoader(filename=filepath, sampleRate=11025)()
+                tempo_preds = models["tempo_cnn"](audio_11k)
+                avg_preds = np.mean(tempo_preds, axis=0)
+                peak_bin = int(np.argmax(avg_preds))
+                # Weighted average around peak for sub-BPM precision
+                window = 5
+                lo = max(0, peak_bin - window)
+                hi = min(len(avg_preds), peak_bin + window + 1)
+                bpm = round(float(np.average(
+                    np.arange(lo, hi) + 30, weights=avg_preds[lo:hi]
+                )), 2)
+            else:
+                # DSP fallback
+                audio_44k = es.MonoLoader(filename=filepath, sampleRate=44100)()
+                rhythm = es.RhythmExtractor2013(method="multifeature")
+                bpm_val, _, _, _, _ = rhythm(audio_44k)
+                bpm = round(float(bpm_val), 2)
+        except Exception:
+            bpm = 0
+
+        try:
+            if audio_44k is None:
+                audio_44k = es.MonoLoader(filename=filepath, sampleRate=44100)()
+            key_extractor = es.KeyExtractor(profileType="edmm")
+            key_name, scale, ks = key_extractor(audio_44k)
+            standard_key = f"{key_name}{'m' if scale == 'minor' else ''}"
+            key_str = CAMELOT_MAP.get(standard_key, standard_key)
+            key_strength = round(float(ks), 3)
+        except Exception:
+            key_str = ""
+            key_strength = 0.0
 
     # ─── Energy helpers ───────────────────────────────────
     def _raw_energy(dance_v: float, arousal_v: float, agg_v: float, rel_v: float) -> float:
@@ -356,7 +357,6 @@ def analyze_track(filepath: str, models: dict) -> dict:
         "electronic_genres": electronic_genres,
         "moods": moods,
         "danceability": danceability,
-        "mood_party": mood_party,
         "arousal": arousal_norm,
         "valence": valence_norm,
         "energy": energy,
@@ -367,5 +367,5 @@ def analyze_track(filepath: str, models: dict) -> dict:
         "bpm": bpm,
         "key": key_str,
         "key_strength": key_strength,
-        "duration": len(audio_44k) / 44100,
+        "duration": len(audio) / 16000,
     }

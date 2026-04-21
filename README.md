@@ -118,7 +118,6 @@ You should end up with 11 `.pb` files:
 ├── mood_sad-discogs-effnet-1.pb
 ├── mood_aggressive-discogs-effnet-1.pb
 ├── mood_relaxed-discogs-effnet-1.pb
-├── mood_party-discogs-effnet-1.pb
 ├── danceability-discogs-effnet-1.pb
 └── emomusic-msd-musicnn-2.pb         # Arousal/Valence regression
 ```
@@ -189,7 +188,7 @@ Shows all DJ Tagger tags with colored bars for energy, valence, and mood scores:
  🔥 Aggressive        ██████████░░░░░  0.673
  😌 Relaxed           ████░░░░░░░░░░░  0.258
 
- Comment              Energy: High | Mood: Neutral
+ Comment              Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot | Dance: High
  Tagger version       v4
 ```
 
@@ -441,7 +440,6 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Valence | `TXXX:VALENCE` | Score 0–1 | From emomusic arousal/valence model |
 | Danceability | `TXXX:DANCEABILITY` | Score 0–1 | Dedicated danceability model |
 | Arousal | `TXXX:AROUSAL` | Score 0–1 | From emomusic model (normalized) |
-| Party | `TXXX:MOOD_PARTY` | Score 0–1 | Party mood prediction |
 | Peak energy | `TXXX:PEAK_ENERGY` | Score 0–1 | Highest energy across ~30s segments |
 | Intro energy | `TXXX:INTRO_ENERGY` | Score 0–1 | Energy of the first ~30s |
 | Energy variance | `TXXX:ENERGY_VARIANCE` | Small float | Low = steady groove, high = builds/drops |
@@ -452,8 +450,8 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Genre source | `TXXX:GENRE_SOURCE` | `beatport`, `lastfm+ml`, or `ml` | Which tier provided the genre |
 | Genre detected | `TXXX:GENRE_DETECTED` | Full detected genre string | Stored even if TCON was preserved |
 | Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v5` | For tracking re-tag needs |
-| Comment | `COMM::eng` | `E:High Mood:Dark Dance:High Peak:0.92` | Human-readable, visible in Serato/rekordbox |
-| Comment (detail) | `COMM:djtagger:eng` | `E:0.81 V:0.34 D:0.89 Peak:0.92 Arousal:0.77` | Hidden reference with raw values |
+| Comment | `COMM::eng` | `Energy: High \| Mood: Bright \| Edge: Hard \| Peak: 0.98 \| Intro: Hot \| Dance: High` | Human-readable, visible in Serato/rekordbox |
+| Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
 All other existing ID3 frames (BPM, key, Serato cues, artwork, etc.) are left untouched.
 
@@ -475,13 +473,19 @@ The human-readable comment (`COMM::eng`) uses these labels:
 | Valence (Mood) | < 0.33 | Dark |
 | Valence (Mood) | 0.33 – 0.66 | Neutral |
 | Valence (Mood) | > 0.66 | Bright |
+| Aggressive (Edge) | < 0.25 | Soft |
+| Aggressive (Edge) | 0.25 – 0.5 | Mid |
+| Aggressive (Edge) | ≥ 0.5 | Hard |
+| Intro energy (Intro) | < 0.5 | Quiet |
+| Intro energy (Intro) | 0.5 – 0.75 | Mid |
+| Intro energy (Intro) | ≥ 0.75 | Hot |
 | Danceability (Dance) | < 0.4 | Low |
 | Danceability (Dance) | 0.4 – 0.7 | Mid |
 | Danceability (Dance) | > 0.7 | High |
 
-Peak energy is shown as a raw number (e.g., `Peak:0.92`) for precision.
+Peak energy is shown as a raw number (e.g., `Peak: 0.98`) for precision.
 
-Example: `E:High Mood:Dark Dance:High Peak:0.92`
+Example: `Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot | Dance: High`
 
 ## Configuration
 

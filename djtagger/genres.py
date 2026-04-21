@@ -237,9 +237,9 @@ def get_beatport_genre(artist: str, title: str) -> list[str]:
                 genres.append(gname)
 
     except subprocess.TimeoutExpired:
-        pass
+        return []
     except Exception:
-        pass
+        return []
 
     _beatport_cache[cache_key] = genres[:3]
     return genres[:3]

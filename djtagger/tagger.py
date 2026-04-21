@@ -61,7 +61,6 @@ def read_tags(filepath: str) -> dict:
         "key": "",
         # v5 fields
         "danceability": "",
-        "mood_party": "",
         "arousal": "",
         "peak_energy": "",
         "intro_energy": "",
@@ -98,7 +97,6 @@ def read_tags(filepath: str) -> dict:
         "TAGGER_VERSION": "tagger_version",
         # v5 tags
         "DANCEABILITY": "danceability",
-        "MOOD_PARTY": "mood_party",
         "AROUSAL": "arousal",
         "PEAK_ENERGY": "peak_energy",
         "INTRO_ENERGY": "intro_energy",
@@ -128,17 +126,27 @@ def _build_comment(
     danceability: float = 0.0,
     peak_energy: float = 0.0,
     arousal: float = 0.0,
+    aggressive: float = 0.0,
+    intro_energy: float = 0.0,
 ) -> tuple[str, str]:
     """Build human-readable comment and detail string."""
     e_lbl = "Low" if energy < 0.4 else "Mid" if energy < 0.7 else "High"
     v_lbl = "Dark" if valence < 0.33 else "Neutral" if valence < 0.66 else "Bright"
     d_lbl = "Low" if danceability < 0.4 else "Mid" if danceability < 0.7 else "High"
+    agg_lbl = "Soft" if aggressive < 0.25 else "Mid" if aggressive < 0.5 else "Hard"
+    intro_lbl = "Quiet" if intro_energy < 0.5 else "Mid" if intro_energy < 0.75 else "Hot"
 
     # Visible in Serato/rekordbox
-    comment = f"Energy: {e_lbl} | Mood: {v_lbl} | Dance: {d_lbl} | Peak: {peak_energy:.2f}"
+    comment = (
+        f"Energy: {e_lbl} | Mood: {v_lbl} | Edge: {agg_lbl} | "
+        f"Peak: {peak_energy:.2f} | Intro: {intro_lbl} | Dance: {d_lbl}"
+    )
 
     # Hidden detail comment
-    detail = f"E:{energy} | V:{valence} | D:{danceability} | Peak:{peak_energy} | Arousal:{arousal}"
+    detail = (
+        f"E:{energy} | V:{valence} | Agg:{aggressive} | "
+        f"Peak:{peak_energy} | Intro:{intro_energy} | D:{danceability} | Arousal:{arousal}"
+    )
 
     return comment, detail
 
@@ -191,7 +199,6 @@ def write_tags(
             ("TAGGER_VERSION", TAGGER_VERSION),
             # v5 tags
             ("DANCEABILITY", result["danceability"]),
-            ("MOOD_PARTY", result["mood_party"]),
             ("AROUSAL", result["arousal"]),
             ("PEAK_ENERGY", result["peak_energy"]),
             ("INTRO_ENERGY", result["intro_energy"]),
@@ -200,13 +207,18 @@ def write_tags(
             tags.delall(f"TXXX:{key}")
             tags.add(TXXX(encoding=3, desc=key, text=[str(val)]))
 
+        # Remove retired tags from older versions
+        tags.delall("TXXX:MOOD_PARTY")
+
         # Comments
         comment, detail = _build_comment(
-            result["energy"],
-            result["valence"],
-            result.get("danceability", 0.0),
-            result.get("peak_energy", 0.0),
-            result.get("arousal", 0.0),
+            energy=result["energy"],
+            valence=result["valence"],
+            danceability=result.get("danceability", 0.0),
+            peak_energy=result.get("peak_energy", 0.0),
+            arousal=result.get("arousal", 0.0),
+            aggressive=result["moods"]["aggressive"],
+            intro_energy=result.get("intro_energy", 0.0),
         )
         tags.delall("COMM::eng")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
@@ -233,23 +245,27 @@ def write_tags(
         return False, f"error: {ex}"
 
 
-def fix_comments(filepath: str) -> bool:
+def fix_comments(filepath: str) -> str:
     """Re-write comments from existing TXXX energy/valence/danceability tags.
 
-    Returns True if comment was updated, False if skipped.
+    Returns "fixed" on success, "skipped" if file lacks djtagger tags,
+    or "error" on read/write failure.
     """
     try:
         tags = ID3(filepath)
+    except Exception:
+        return "skipped"
 
-        # Only fix files that have our tagger version tag
-        tv = tags.get("TXXX:TAGGER_VERSION")
-        if not tv:
-            return False
-        e_tag = tags.get("TXXX:ENERGY")
-        v_tag = tags.get("TXXX:VALENCE")
-        if not e_tag or not e_tag.text or not v_tag or not v_tag.text:
-            return False
+    # Only fix files that have our tagger version tag
+    tv = tags.get("TXXX:TAGGER_VERSION")
+    if not tv:
+        return "skipped"
+    e_tag = tags.get("TXXX:ENERGY")
+    v_tag = tags.get("TXXX:VALENCE")
+    if not e_tag or not e_tag.text or not v_tag or not v_tag.text:
+        return "skipped"
 
+    try:
         e = float(e_tag.text[0])
         v = float(v_tag.text[0])
 
@@ -260,17 +276,24 @@ def fix_comments(filepath: str) -> bool:
         p = float(p_tag.text[0]) if p_tag and p_tag.text else 0.0
         a_tag = tags.get("TXXX:AROUSAL")
         a = float(a_tag.text[0]) if a_tag and a_tag.text else 0.0
+        agg_tag = tags.get("TXXX:MOOD_AGGRESSIVE")
+        agg = float(agg_tag.text[0]) if agg_tag and agg_tag.text else 0.0
+        intro_tag = tags.get("TXXX:INTRO_ENERGY")
+        intro = float(intro_tag.text[0]) if intro_tag and intro_tag.text else 0.0
 
-        comment, detail = _build_comment(e, v, d, p, a)
+        comment, detail = _build_comment(
+            energy=e, valence=v, danceability=d, peak_energy=p, arousal=a,
+            aggressive=agg, intro_energy=intro,
+        )
 
         tags.delall("COMM::eng")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
         tags.delall("COMM:djtagger:eng")
         tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
         tags.save(filepath)
-        return True
+        return "fixed"
     except Exception:
-        return False
+        return "error"
 
 
 def clean_junk_genre(filepath: str) -> tuple[bool, str]:
