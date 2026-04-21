@@ -470,9 +470,9 @@ The human-readable comment (`COMM::eng`) uses these labels:
 | Energy | < 0.4 | Low |
 | Energy | 0.4 – 0.7 | Mid |
 | Energy | > 0.7 | High |
-| Valence (Mood) | < 0.33 | Dark |
-| Valence (Mood) | 0.33 – 0.66 | Neutral |
-| Valence (Mood) | > 0.66 | Bright |
+| Valence (Mood) | < 0.58 | Dark |
+| Valence (Mood) | 0.58 – 0.68 | Neutral |
+| Valence (Mood) | ≥ 0.68 | Bright |
 | Aggressive (Edge) | < 0.25 | Soft |
 | Aggressive (Edge) | 0.25 – 0.5 | Mid |
 | Aggressive (Edge) | ≥ 0.5 | Hard |
@@ -482,6 +482,8 @@ The human-readable comment (`COMM::eng`) uses these labels:
 | Danceability (Dance) | < 0.4 | Low |
 | Danceability (Dance) | 0.4 – 0.7 | Mid |
 | Danceability (Dance) | > 0.7 | High |
+
+Mood thresholds are tuned for electronic/dance music, where valence values cluster 0.45–0.80 — the 0–1 theoretical range is rarely exercised in practice.
 
 Peak energy is shown as a raw number (e.g., `Peak: 0.98`) for precision.
 

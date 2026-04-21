@@ -131,7 +131,9 @@ def _build_comment(
 ) -> tuple[str, str]:
     """Build human-readable comment and detail string."""
     e_lbl = "Low" if energy < 0.4 else "Mid" if energy < 0.7 else "High"
-    v_lbl = "Dark" if valence < 0.33 else "Neutral" if valence < 0.66 else "Bright"
+    # Valence thresholds tuned for electronic/dance music distribution
+    # (median ~0.63, range ~0.45–0.80); the 0–1 model range is rarely exercised.
+    v_lbl = "Dark" if valence < 0.58 else "Neutral" if valence < 0.68 else "Bright"
     d_lbl = "Low" if danceability < 0.4 else "Mid" if danceability < 0.7 else "High"
     agg_lbl = "Soft" if aggressive < 0.25 else "Mid" if aggressive < 0.5 else "Hard"
     intro_lbl = "Quiet" if intro_energy < 0.5 else "Mid" if intro_energy < 0.75 else "Hot"
