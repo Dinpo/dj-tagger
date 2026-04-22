@@ -93,58 +93,90 @@ def _remix_words(mix_str: str) -> set[str]:
 # ─── Beatport scoring ──────────────────────────────────────
 
 
+_TITLE_STOPWORDS = {"the", "a", "an", "feat", "ft", "and"}
+
+
+def _title_tokens(s: str) -> set[str]:
+    """Extract meaningful title words from a string, stopword-stripped."""
+    return {t for t in re.findall(r"\w+", s.lower()) if t not in _TITLE_STOPWORDS}
+
+
 def _score_beatport_result(
     item: dict,
     artist_lower: str,
     base_title_lower: str,
     file_mix_info: str,
 ) -> int:
-    """Score a Beatport result for match quality. Higher = better."""
+    """Score a Beatport result for match quality. Higher = better.
+
+    Returns -100 as a hard reject when the track's title shares no meaningful
+    tokens with the file — no amount of artist or mix-name bonus can rescue
+    a completely different track.
+    """
     track_name = (item.get("track_name") or "").lower()
     mix_name = item.get("mix_name", "") or ""
     item_artists = [a.get("artist_name", "").lower() for a in item.get("artists", [])]
 
-    score = 0
+    # Strip parenthesised sections from track_name for title comparison — that
+    # content (e.g. "(VIP)", "(Radio Edit)") belongs to the mix comparison.
+    track_base = re.sub(r"\([^)]*\)", " ", track_name)
+    file_toks = _title_tokens(base_title_lower)
+    tn_toks = _title_tokens(track_base)
 
-    # Track name match (required for a good match)
-    if base_title_lower in track_name or track_name in base_title_lower:
-        score += 10
-    elif any(w in track_name for w in base_title_lower.split() if len(w) > 2):
-        score += 3  # Partial title match
+    overlap = file_toks & tn_toks if (file_toks and tn_toks) else set()
+    if file_toks and not overlap:
+        # Different track entirely — hard reject
+        return -100
+
+    # Title match — scaled by how many file-title tokens appear in the track
+    score = 0
+    if file_toks:
+        frac = len(overlap) / len(file_toks)
+        if frac >= 1.0:
+            score += 15  # All file tokens present
+        elif frac >= 0.5:
+            score += 8   # Majority match
+        else:
+            score += 2   # Weak — some overlap but mostly different
     else:
-        score -= 10  # Wrong track entirely
+        # Degenerate: empty file tokens (stopwords only?). Fall back to substring.
+        if base_title_lower and base_title_lower in track_name:
+            score += 10
 
     # Artist match
     if any(a in artist_lower or artist_lower in a for a in item_artists if a):
         score += 5
-    # Check individual artist names (for "Artist1 & Artist2" cases)
     for part in re.split(r"\s*[&,]\s*", artist_lower):
         part = part.strip()
         if part and any(part in a or a in part for a in item_artists if a):
             score += 2
 
-    # Mix / remix matching (the critical part)
+    # Beatport sometimes puts remix info inside the track_name parens
+    # (e.g. "More Baby (VIP)" + mix_name="Extended Mix"). Combine both for the
+    # mix comparison so we don't miss these split-encoding cases.
+    paren_parts = " ".join(re.findall(r"\(([^)]+)\)", track_name))
+    bp_mix_effective = f"{paren_parts} {mix_name}".strip()
+
+    # Mix / remix matching
     if file_mix_info:
         file_mix_norm = _normalize_mix(file_mix_info)
-        bp_mix_norm = _normalize_mix(mix_name)
+        bp_mix_norm = _normalize_mix(bp_mix_effective)
 
         if file_mix_norm and bp_mix_norm and file_mix_norm == bp_mix_norm:
             score += 25  # Exact remix match
         elif file_mix_norm and bp_mix_norm:
-            # Fuzzy: check if key remix words overlap
             file_words = _remix_words(file_mix_info)
-            bp_words = _remix_words(mix_name)
+            bp_words = _remix_words(bp_mix_effective)
             if file_words and bp_words:
-                overlap = file_words & bp_words
-                if overlap:
-                    score += 15 + len(overlap) * 3
+                word_overlap = file_words & bp_words
+                if word_overlap:
+                    score += 15 + len(word_overlap) * 3
                 else:
                     score -= 20  # Different remix
 
-        if not _is_generic_mix(file_mix_info) and _is_generic_mix(mix_name):
+        if not _is_generic_mix(file_mix_info) and _is_generic_mix(bp_mix_effective):
             score -= 15  # We want a specific remix, this is original/extended
     else:
-        # No specific remix in filename — prefer original/extended
         if _is_generic_mix(mix_name):
             score += 3
 
@@ -231,8 +263,11 @@ def get_beatport_metadata(artist: str, title: str) -> dict:
 
         best_score, best = scored[0]
 
-        # If we wanted a specific remix but best match is poor, skip Beatport
-        if file_mix_info and not _is_generic_mix(file_mix_info) and best_score < 10:
+        # Universal acceptance floor — any match needs title+artist confidence
+        # beyond chance. The title gate already rejects unrelated tracks;
+        # this catches cases where the best remaining match is still weak.
+        min_score = 15 if (file_mix_info and not _is_generic_mix(file_mix_info)) else 10
+        if best_score < min_score:
             _beatport_cache[cache_key] = dict(_EMPTY_BP)
             return dict(_EMPTY_BP)
 
