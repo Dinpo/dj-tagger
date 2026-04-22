@@ -544,6 +544,14 @@ def info(
         table.add_row("Genre (detected)", f"[dim]{tags['genre_detected']}[/dim]")
     table.add_row("", "")
 
+    # Album & Year
+    if tags.get("album"):
+        table.add_row("Album", tags["album"])
+    if tags.get("year"):
+        table.add_row("Year", tags["year"])
+    if tags.get("album") or tags.get("year"):
+        table.add_row("", "")
+
     # BPM & Key
     if tags.get("bpm"):
         table.add_row("BPM", f"[bold]{tags['bpm']}[/bold]")

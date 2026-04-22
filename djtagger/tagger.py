@@ -65,6 +65,8 @@ def read_tags(filepath: str) -> dict:
         "comment_detail": "",
         "bpm": "",
         "key": "",
+        "album": "",
+        "year": "",
         # v5 fields
         "danceability": "",
         "arousal": "",
@@ -89,6 +91,12 @@ def read_tags(filepath: str) -> dict:
     tkey = tags.getall("TKEY")
     if tkey and tkey[0].text:
         info["key"] = tkey[0].text[0].strip()
+    talb = tags.getall("TALB")
+    if talb and talb[0].text:
+        info["album"] = str(talb[0].text[0]).strip()
+    tdrc = tags.getall("TDRC")
+    if tdrc and tdrc[0].text:
+        info["year"] = str(tdrc[0].text[0]).strip()
 
     # TXXX custom tags
     tag_map = {
