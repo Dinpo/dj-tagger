@@ -86,14 +86,12 @@ def _log_error(filepath: str, msg: str) -> None:
 
 SOURCE_COLORS = {
     "beatport": "green",
-    "musicbrainz": "magenta",
     "lastfm+ml": "yellow",
     "ml": "blue",
 }
 
 SOURCE_ICONS = {
     "beatport": "🟢",
-    "musicbrainz": "🟣",
     "lastfm+ml": "🟡",
     "ml": "🔵",
 }
@@ -120,14 +118,12 @@ def _make_stats_panel(
 
     # Genre sources
     bp = genre_sources.get("beatport", 0)
-    mb = genre_sources.get("musicbrainz", 0)
     fm = genre_sources.get("lastfm+ml", 0)
     ml = genre_sources.get("ml", 0)
     lines.append(
-        f"  🟢 Beatport [bold green]{bp:>4}[/bold green]"
-        f"   🟣 MusicBrainz [bold magenta]{mb:>4}[/bold magenta]"
-        f"   🟡 Last.fm+ML [bold yellow]{fm:>4}[/bold yellow]"
-        f"   🔵 ML-only [bold blue]{ml:>4}[/bold blue]"
+        f"  🟢 Beatport  [bold green]{bp:>4}[/bold green]"
+        f"   🟡 Last.fm+ML  [bold yellow]{fm:>4}[/bold yellow]"
+        f"   🔵 ML-only  [bold blue]{ml:>4}[/bold blue]"
     )
     lines.append("")
 
@@ -171,11 +167,9 @@ def _make_summary_table(
     table.add_row("", "")
 
     bp = genre_sources.get("beatport", 0)
-    mb = genre_sources.get("musicbrainz", 0)
     fm = genre_sources.get("lastfm+ml", 0)
     ml = genre_sources.get("ml", 0)
     table.add_row("🟢 Beatport", f"[green]{bp}[/green]")
-    table.add_row("🟣 MusicBrainz", f"[magenta]{mb}[/magenta]")
     table.add_row("🟡 Last.fm+ML", f"[yellow]{fm}[/yellow]")
     table.add_row("🔵 ML-only", f"[blue]{ml}[/blue]")
     table.add_row("", "")
@@ -212,10 +206,6 @@ def tag(
     dry_run: bool = typer.Option(False, "--dry-run", help="Analyze without writing tags"),
     force: bool = typer.Option(False, "--force", help="Re-tag already tagged files"),
     no_beatport: bool = typer.Option(False, "--no-beatport", help="Skip Beatport lookups"),
-    no_musicbrainz: bool = typer.Option(
-        False, "--no-musicbrainz",
-        help="Skip MusicBrainz lookups (off by default; MB is throttled to 1 req/sec)",
-    ),
     fix_comments: bool = typer.Option(
         False, "--fix-comments", help="Update comments on already-tagged files (no re-analysis)"
     ),
@@ -240,7 +230,7 @@ def tag(
 
     try:
         _tag_inner(
-            path, dry_run, force, no_beatport, no_musicbrainz,
+            path, dry_run, force, no_beatport,
             fix_comments, detect_bpm_key,
         )
     finally:
@@ -252,7 +242,6 @@ def _tag_inner(
     dry_run: bool,
     force: bool,
     no_beatport: bool,
-    no_musicbrainz: bool,
     fix_comments: bool,
     detect_bpm_key: bool,
 ) -> None:
@@ -348,7 +337,7 @@ def _tag_inner(
         processed=0,
         failed=0,
         current="",
-        genre_sources={"beatport": 0, "musicbrainz": 0, "lastfm+ml": 0, "ml": 0},
+        genre_sources={"beatport": 0, "lastfm+ml": 0, "ml": 0},
         started=time.strftime("%Y-%m-%d %H:%M:%S"),
         avg_seconds=0,
         eta_hours=0,
@@ -371,7 +360,7 @@ def _tag_inner(
     results: list[dict] = []
     failed = 0
     start_time = time.time()
-    genre_sources: dict[str, int] = {"beatport": 0, "musicbrainz": 0, "lastfm+ml": 0, "ml": 0}
+    genre_sources: dict[str, int] = {"beatport": 0, "lastfm+ml": 0, "ml": 0}
 
     progress = Progress(
         SpinnerColumn(),
@@ -427,7 +416,6 @@ def _tag_inner(
                     result["genres"],
                     ml_electronic_genres=result.get("electronic_genres"),
                     use_beatport=not no_beatport,
-                    use_musicbrainz=not no_musicbrainz,
                     genre_keep_prob=GENRE_KEEP_PROB,
                 )
                 final_genres = meta["genres"]
