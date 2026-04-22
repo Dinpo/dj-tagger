@@ -42,14 +42,18 @@ _lastfm_warned = False
 
 
 def _extract_mix_info(title: str) -> tuple[str, str]:
-    """Extract remix/mix info and base title from track title."""
+    """Extract remix/mix info and base title from track title.
+
+    Recognises both parenthesised "(...)" and bracketed "[...]" remix markers,
+    since labels use them interchangeably (e.g. "Track Name [Artist Remix]").
+    """
     mix_match = re.search(
-        r"\(([^)]*(?:remix|mix|edit|dub|rework|bootleg|version|vip)[^)]*)\)",
+        r"[\(\[]([^)\]]*(?:remix|mix|edit|dub|rework|bootleg|version|vip)[^)\]]*)[\)\]]",
         title,
         re.IGNORECASE,
     )
     mix_info = mix_match.group(1).strip() if mix_match else ""
-    base_title = re.sub(r"\s*\(.*?\)\s*", " ", title).strip()
+    base_title = re.sub(r"\s*[\(\[].*?[\)\]]\s*", " ", title).strip()
     return base_title, mix_info
 
 
@@ -117,9 +121,10 @@ def _score_beatport_result(
     mix_name = item.get("mix_name", "") or ""
     item_artists = [a.get("artist_name", "").lower() for a in item.get("artists", [])]
 
-    # Strip parenthesised sections from track_name for title comparison — that
-    # content (e.g. "(VIP)", "(Radio Edit)") belongs to the mix comparison.
-    track_base = re.sub(r"\([^)]*\)", " ", track_name)
+    # Strip parenthesised / bracketed sections from track_name for title
+    # comparison — that content (e.g. "(VIP)", "[Radio Edit]") belongs to the
+    # mix comparison instead.
+    track_base = re.sub(r"[\(\[][^)\]]*[\)\]]", " ", track_name)
     file_toks = _title_tokens(base_title_lower)
     tn_toks = _title_tokens(track_base)
 
@@ -151,10 +156,10 @@ def _score_beatport_result(
         if part and any(part in a or a in part for a in item_artists if a):
             score += 2
 
-    # Beatport sometimes puts remix info inside the track_name parens
+    # Beatport sometimes puts remix info inside the track_name parens/brackets
     # (e.g. "More Baby (VIP)" + mix_name="Extended Mix"). Combine both for the
     # mix comparison so we don't miss these split-encoding cases.
-    paren_parts = " ".join(re.findall(r"\(([^)]+)\)", track_name))
+    paren_parts = " ".join(re.findall(r"[\(\[]([^)\]]+)[\)\]]", track_name))
     bp_mix_effective = f"{paren_parts} {mix_name}".strip()
 
     # Mix / remix matching
