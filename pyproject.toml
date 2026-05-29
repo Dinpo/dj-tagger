@@ -17,6 +17,7 @@ dependencies = [
     "numpy",
     "typer>=0.9",
     "rich>=13.0",
+    "curl_cffi>=0.7",
 ]
 
 [project.scripts]

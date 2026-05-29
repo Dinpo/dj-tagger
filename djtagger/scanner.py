@@ -2,6 +2,8 @@
 
 import os
 
+from mutagen.id3 import ID3
+
 from .tagger import is_already_tagged
 
 # ─── Find MP3s ──────────────────────────────────────────────
@@ -34,3 +36,32 @@ def filter_untagged(mp3s: list[str]) -> tuple[list[str], int]:
         else:
             to_process.append(f)
     return to_process, skipped
+
+
+def filter_by_source(mp3s: list[str], source: str) -> tuple[list[str], int]:
+    """Keep only MP3s whose existing TXXX:GENRE_SOURCE matches *source*.
+
+    Used by `tag --retag-source <source>` to surgically re-tag a subset
+    (e.g. all ML-only tracks after a Beatport outage is fixed). Files
+    with no GENRE_SOURCE, a different source, or unreadable tags are skipped.
+
+    Returns (matching_files, skipped_count).
+    """
+    matching: list[str] = []
+    skipped = 0
+    for f in mp3s:
+        try:
+            tags = ID3(f)
+        except Exception:
+            skipped += 1
+            continue
+        found = False
+        for frame in tags.getall("TXXX"):
+            if frame.desc == "GENRE_SOURCE" and frame.text:
+                if frame.text[0].strip() == source:
+                    matching.append(f)
+                    found = True
+                break
+        if not found:
+            skipped += 1
+    return matching, skipped

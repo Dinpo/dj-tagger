@@ -8,6 +8,9 @@ from collections import OrderedDict
 from typing import Any
 from urllib.parse import quote as _url_quote
 
+from curl_cffi import requests as _cffi_requests
+from curl_cffi.requests.errors import RequestsError as _CffiRequestsError
+
 from .config import (
     BEATPORT_TIMEOUT,
     LASTFM_API_KEY,
@@ -41,20 +44,51 @@ _lastfm_warned = False
 # ─── Mix / Remix helpers ────────────────────────────────────
 
 
-def _extract_mix_info(title: str) -> tuple[str, str]:
-    """Extract remix/mix info and base title from track title.
+_FEAT_RE = re.compile(r"\b(?:feat\.?|ft\.?|featuring)\b", re.IGNORECASE)
+_TOP_LEVEL_FEAT_RE = re.compile(
+    r"\s+(?:feat\.?|ft\.?|featuring)\s+[^()\[\]]+?(?=\s*[\(\[]|$)",
+    re.IGNORECASE,
+)
+_MIX_KEYWORDS_RE = re.compile(
+    r"\b(?:remix|mix|edit|dub|rework|bootleg|version|vip)\b",
+    re.IGNORECASE,
+)
+_PAREN_OR_BRACKET_RE = re.compile(r"[\(\[]([^)\]]*)[\)\]]")
 
-    Recognises both parenthesised "(...)" and bracketed "[...]" remix markers,
-    since labels use them interchangeably (e.g. "Track Name [Artist Remix]").
+
+def _extract_mix_info(title: str) -> tuple[str, str, str]:
+    """Parse a track title into (base_title, subtitle_extras, mix_info).
+
+    The three buckets:
+      - mix_info: paren/bracket content with a remix-marker keyword (the first
+        one wins, e.g. "Friction Remix", "Extended Mix").
+      - subtitle_extras: other paren/bracket content that disambiguates the
+        track but isn't a remix marker (e.g. "ASOT 950 Anthem",
+        "Love Lesson"). Joined with spaces if multiple.
+      - base_title: the main title with top-level "feat. X" segments AND all
+        paren/bracket sections stripped.
+
+    Featured-artist parens like "(feat. Someone)" are dropped entirely — they
+    pollute both the search query and the title-token comparison.
     """
-    mix_match = re.search(
-        r"[\(\[]([^)\]]*(?:remix|mix|edit|dub|rework|bootleg|version|vip)[^)\]]*)[\)\]]",
-        title,
-        re.IGNORECASE,
-    )
-    mix_info = mix_match.group(1).strip() if mix_match else ""
-    base_title = re.sub(r"\s*[\(\[].*?[\)\]]\s*", " ", title).strip()
-    return base_title, mix_info
+    mix_parts: list[str] = []
+    subtitle_parts: list[str] = []
+    for m in _PAREN_OR_BRACKET_RE.finditer(title):
+        content = m.group(1).strip()
+        if not content or _FEAT_RE.search(content):
+            continue
+        if _MIX_KEYWORDS_RE.search(content):
+            mix_parts.append(content)
+        else:
+            subtitle_parts.append(content)
+    mix_info = mix_parts[0] if mix_parts else ""
+    subtitle_extras = " ".join(subtitle_parts).strip()
+
+    # Strip top-level "feat. X" then all parens/brackets
+    base = _TOP_LEVEL_FEAT_RE.sub("", title)
+    base = re.sub(r"\s*[\(\[][^)\]]*[\)\]]\s*", " ", base)
+    base_title = re.sub(r"\s+", " ", base).strip()
+    return base_title, subtitle_extras, mix_info
 
 
 def _normalize_mix(mix_str: str) -> str:
@@ -193,6 +227,17 @@ def _score_beatport_result(
 
 _EMPTY_BP: dict = {"genres": [], "album": "", "year": ""}
 
+_beatport_warned = False
+
+
+def _warn_beatport_once(message: str) -> None:
+    """Print a Beatport-broken warning at most once per process."""
+    global _beatport_warned
+    if _beatport_warned:
+        return
+    _beatport_warned = True
+    print(f"[djtagger] Warning: {message}", file=sys.stderr)
+
 
 def get_beatport_metadata(artist: str, title: str) -> dict:
     """Look up a track on Beatport via search page scraping.
@@ -205,33 +250,63 @@ def get_beatport_metadata(artist: str, title: str) -> dict:
     if cache_key in _beatport_cache:
         return _beatport_cache[cache_key]
 
-    base_title, file_mix_info = _extract_mix_info(title)
+    base_title, subtitle_extras, file_mix_info = _extract_mix_info(title)
     artist_search = re.sub(r"\s*&\s*", " ", artist).strip()
 
-    # Include remix info in search query for better results
+    # Build the search query from artist + base title + any subtitle (e.g.
+    # "ASOT 950 Anthem"). Subtitle is high-signal for Beatport's relevance
+    # ranking — without it, common-word titles get drowned out by other
+    # tracks containing the artist's name.
+    query_parts = [artist_search, base_title]
+    if subtitle_extras:
+        query_parts.append(subtitle_extras)
     if file_mix_info and not _is_generic_mix(file_mix_info):
-        remix_terms = _normalize_mix(file_mix_info)
-        query = f"{artist_search} {base_title} {remix_terms}".strip()
-    else:
-        query = f"{artist_search} {base_title}".strip()
+        query_parts.append(_normalize_mix(file_mix_info))
+    query = " ".join(p for p in query_parts if p).strip()
 
     try:
         url = f"https://www.beatport.com/search/tracks?q={_url_quote(query)}"
-        result = subprocess.run(
-            ["curl", "-s", "-m", str(BEATPORT_TIMEOUT), "-A", "Mozilla/5.0", url],
-            capture_output=True,
-            text=True,
-            timeout=BEATPORT_TIMEOUT + 2,
-        )
-        if result.returncode != 0 or not result.stdout:
+        # curl_cffi impersonates Chrome's TLS fingerprint — Beatport sits behind
+        # Cloudflare which 403s plain curl/python-requests even with browser
+        # User-Agent. impersonate="chrome" is what gets past the challenge.
+        try:
+            resp = _cffi_requests.get(
+                url, impersonate="chrome", timeout=BEATPORT_TIMEOUT
+            )
+        except _CffiRequestsError:
+            # Transient network/TLS error — don't cache, allow retry next run
+            return dict(_EMPTY_BP)
+
+        body = resp.text
+        if resp.status_code != 200 or not body:
+            blocked = (
+                resp.status_code == 403
+                or "Just a moment" in body[:2000]
+                or "challenge-platform" in body[:2000]
+            )
+            if blocked:
+                _warn_beatport_once(
+                    f"Beatport returning Cloudflare challenge (HTTP "
+                    f"{resp.status_code}). All Beatport lookups will fall "
+                    "through to Last.fm/ML for the rest of this run."
+                )
+            else:
+                _warn_beatport_once(
+                    f"Beatport returned HTTP {resp.status_code} — lookups "
+                    "will fall through to Last.fm/ML."
+                )
             _beatport_cache[cache_key] = dict(_EMPTY_BP)
             return dict(_EMPTY_BP)
 
         match = re.search(
             r'__NEXT_DATA__.*?type="application/json">(.*?)</script>',
-            result.stdout,
+            body,
         )
         if not match:
+            _warn_beatport_once(
+                "Beatport response missing __NEXT_DATA__ (page format may have "
+                "changed). Lookups will fall through to Last.fm/ML."
+            )
             _beatport_cache[cache_key] = dict(_EMPTY_BP)
             return dict(_EMPTY_BP)
 
@@ -243,10 +318,9 @@ def get_beatport_metadata(artist: str, title: str) -> dict:
                 ["queries"][0]["state"]["data"]["data"]
             )
         except (KeyError, IndexError, TypeError):
-            print(
-                "[djtagger] Warning: Beatport page structure changed — "
-                "scraping may be broken. Falling back to other sources.",
-                file=sys.stderr,
+            _warn_beatport_once(
+                "Beatport __NEXT_DATA__ shape changed — scraping path broken. "
+                "Lookups will fall through to Last.fm/ML."
             )
             _beatport_cache[cache_key] = dict(_EMPTY_BP)
             return dict(_EMPTY_BP)
@@ -291,8 +365,6 @@ def get_beatport_metadata(artist: str, title: str) -> dict:
         year_match = re.search(r"(19|20)\d{2}", date_str)
         year = year_match.group(0) if year_match else ""
 
-    except subprocess.TimeoutExpired:
-        return dict(_EMPTY_BP)
     except Exception:
         return dict(_EMPTY_BP)
 

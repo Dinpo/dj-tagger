@@ -144,16 +144,24 @@ def _genre_tokens(s: str) -> set[str]:
     return {p.strip("()[]{}") for p in parts if p and p != "and"}
 
 
+_SOURCE_TIER = {"ml": 1, "lastfm+ml": 2, "beatport": 3}
+
+
 def _merge_genres(
     existing: str,
     proposed: list[str],
     max_total: int = 5,
+    existing_source: str = "",
+    new_source: str = "",
 ) -> tuple[str, str]:
     """Decide the TCON value to write based on existing vs proposed genres.
 
-    Rules:
+    Rules (checked top to bottom):
         - proposed empty → keep existing
         - existing empty or junk → replace with proposed
+        - existing was set by djtagger from a *weaker* source than the new one
+          (ml → lastfm+ml / beatport, or lastfm+ml → beatport) → replace
+          (don't merge old ML guesses into authoritative new data)
         - token-identical → keep existing (preserve original formatting)
         - existing ⊂ proposed (strictly more specific) → upgrade to proposed
         - proposed ⊂ existing → keep (don't downgrade specificity)
@@ -172,6 +180,18 @@ def _merge_genres(
 
     if is_junk_genre(existing):
         return proposed_str, f"replaced junk '{existing}'"
+
+    # Tier-upgrade replace: if a previous djtagger run wrote this tag from a
+    # weaker source than what we have now, drop the old guess instead of
+    # merging stale ML tokens into authoritative Beatport/Last.fm data.
+    e_tier = _SOURCE_TIER.get(existing_source, 0)
+    n_tier = _SOURCE_TIER.get(new_source, 0)
+    if existing_source and n_tier > e_tier:
+        return (
+            proposed_str,
+            f"upgraded source {existing_source}→{new_source}: "
+            f"'{existing}' → '{proposed_str}'",
+        )
 
     e_tokens = _genre_tokens(existing)
     p_tokens = _genre_tokens(proposed_str)
@@ -259,8 +279,21 @@ def write_tags(
         if tcon and tcon[0].text:
             existing_genre = tcon[0].text[0].strip()
 
+        # Existing GENRE_SOURCE — used by the merge logic to decide whether
+        # this is a tier upgrade (weaker prior source → stronger new source).
+        existing_source = ""
+        for frame in tags.getall("TXXX"):
+            if frame.desc == "GENRE_SOURCE" and frame.text:
+                existing_source = frame.text[0].strip()
+                break
+
         if genre_list:
-            new_genre, genre_action = _merge_genres(existing_genre, genre_list)
+            new_genre, genre_action = _merge_genres(
+                existing_genre,
+                genre_list,
+                existing_source=existing_source,
+                new_source=genre_source,
+            )
             if new_genre != existing_genre:
                 tags.delall("TCON")
                 tags.add(TCON(encoding=3, text=[new_genre]))

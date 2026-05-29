@@ -213,6 +213,12 @@ def tag(
         False, "--detect-bpm-key",
         help="Also detect BPM and key (off by default — DJ software usually owns these)",
     ),
+    retag_source: str = typer.Option(
+        "", "--retag-source",
+        help="Only re-tag files whose existing GENRE_SOURCE matches "
+             "(e.g. 'ml' to refresh ML-only tracks after Beatport was unreachable). "
+             "Implies --force for matching files; everything else is skipped.",
+    ),
 ) -> None:
     """Tag MP3 files with genre, energy, and mood metadata."""
     global _log_fh, _err_fh
@@ -231,7 +237,7 @@ def tag(
     try:
         _tag_inner(
             path, dry_run, force, no_beatport,
-            fix_comments, detect_bpm_key,
+            fix_comments, detect_bpm_key, retag_source,
         )
     finally:
         _cleanup()
@@ -244,12 +250,13 @@ def _tag_inner(
     no_beatport: bool,
     fix_comments: bool,
     detect_bpm_key: bool,
+    retag_source: str = "",
 ) -> None:
     """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
     from .analyzer import analyze_track, load_models
     from .genres import resolve_metadata
-    from .scanner import filter_untagged, find_mp3s
+    from .scanner import filter_by_source, filter_untagged, find_mp3s
     from .tagger import fix_comments as do_fix_comments
     from .tagger import parse_filename, write_tags
     from rich.console import Group
@@ -302,7 +309,15 @@ def _tag_inner(
     console.print(f"Found [bold]{total_files}[/bold] MP3 files")
 
     # Filter
-    if not force:
+    if retag_source:
+        mp3s, skipped = filter_by_source(all_mp3s, retag_source)
+        force = True  # retag-source always overwrites the matched files
+        console.print(
+            f"[yellow]Retag-source[/yellow] '{retag_source}': "
+            f"[bold]{len(mp3s)}[/bold] matching, "
+            f"[dim]{skipped}[/dim] skipped"
+        )
+    elif not force:
         mp3s, skipped = filter_untagged(all_mp3s)
         if skipped:
             console.print(
