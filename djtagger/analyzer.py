@@ -192,7 +192,8 @@ def analyze_track(
 
     Returns dict with keys: genres, electronic_genres, moods, danceability,
     arousal, valence, energy, raw_energy, peak_energy, intro_energy,
-    energy_variance, bpm, key, key_strength, duration.
+    energy_variance, spectral_centroid, onset_rate, dynamic_range, sub_bass,
+    arc_level, arc_momentum, set_role, bpm, key, key_strength, duration.
     """
     audio = es.MonoLoader(filename=filepath, sampleRate=16000)()
     embeddings = models["embed"](audio)

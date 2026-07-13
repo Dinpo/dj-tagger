@@ -181,7 +181,7 @@ SEGMENT_HOP_SEC = 15      # hop between segments
 FEATURE_RANGE = {
     "spectral_centroid": (1370.0, 2300.0),   # Hz on 16 kHz audio (p10..p90)
     "onset_rate":        (2.3, 3.85),         # onsets per second (p10..p90)
-    "dynamic_range":     (10.0, 18.8),        # dB, p90 minus p10 frame RMS (p10..p90)
+    "dynamic_range":     (10.0, 18.8),        # dB; metric is p90-p10 of frame RMS. Range below is that metric's p10..p90 across library
     "sub_bass":          (0.53, 0.83),        # fraction of energy below 120 Hz (p10..p90)
 }
 

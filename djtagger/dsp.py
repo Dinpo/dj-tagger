@@ -92,6 +92,7 @@ def onset_density(audio, sr, frame_size=1024, hop=512) -> float:
     flux = np.maximum(0.0, np.diff(mags, axis=0)).sum(axis=1) / scale
     if flux.max() <= 1e-8:
         return 0.0
+    # absolute floor: steady-tone leakage sits near 0 while real onsets are ~1, so 0.05 excludes leakage with wide margin
     threshold = max(flux.mean() + flux.std(), 0.05)
     onsets = 0
     for i in range(1, len(flux) - 1):
