@@ -575,6 +575,17 @@ def info(
     if tags.get("bpm") or tags.get("key"):
         table.add_row("", "")
 
+    # Set role (v6): shown first, it is the headline for crate-digging.
+    if tags.get("set_role"):
+        table.add_row("Set role", f"[bold]{tags['set_role']}[/bold]")
+        if tags.get("arc_level"):
+            al = float(tags["arc_level"])
+            table.add_row("Arc level", f"{_mini_bar(al)}  {al:.3f}")
+        if tags.get("arc_momentum"):
+            am = float(tags["arc_momentum"])
+            table.add_row("Arc momentum", f"{am:+.3f}")
+        table.add_row("", "")
+
     # Energy & Mood
     if tags.get("energy"):
         e = float(tags["energy"])
@@ -1101,6 +1112,8 @@ def export(
         "genre_detected", "energy", "valence", "danceability", "arousal",
         "mood_happy", "mood_sad", "mood_aggressive", "mood_relaxed",
         "peak_energy", "intro_energy", "energy_variance",
+        "set_role", "arc_level", "arc_momentum",
+        "spectral_centroid", "onset_rate", "dynamic_range", "sub_bass",
         "tagger_version", "comment",
     ]
 

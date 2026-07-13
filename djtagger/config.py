@@ -22,7 +22,7 @@ LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────
 
-TAGGER_VERSION = "v5"
+TAGGER_VERSION = "v6"
 
 # Genres considered generic / empty — will be replaced
 GENERIC_GENRES = {"other", "unknown", "misc", "music", ""}
@@ -174,3 +174,44 @@ ENERGY_OFFSET = 0.05
 
 SEGMENT_LENGTH_SEC = 30   # embedding frames per segment (~1 frame/sec)
 SEGMENT_HOP_SEC = 15      # hop between segments
+
+# ─── Set-Role Classification (v6) ──────────────────────────
+# Raw-feature normalization ranges (lo, hi) mapped to 0..1.
+# Calibrated 2026-07-13 on 173 tracks sampled across the library (p10..p90).
+FEATURE_RANGE = {
+    "spectral_centroid": (1370.0, 2300.0),   # Hz on 16 kHz audio (p10..p90)
+    "onset_rate":        (2.3, 3.85),         # onsets per second (p10..p90)
+    "dynamic_range":     (10.0, 18.8),        # dB; metric is p90-p10 of frame RMS. Range below is that metric's p10..p90 across library
+    "sub_bass":          (0.53, 0.83),        # fraction of energy below 120 Hz (p10..p90)
+}
+
+# Per-segment energy slope is multiplied by this, then clipped to [-1, 1].
+# Kept at 8.0: internal energy slope is genuinely small on this library
+# (arc_momentum p5..p95 spans only -0.06..+0.11), so momentum is a light nudge
+# and energy/brightness carry the role decision.
+MOMENTUM_SCALE = 8.0
+
+# Role decision thresholds. Calibrated 2026-07-13 on a 173-track sample,
+# then balanced against a 131-track role-distribution check that yielded
+# roughly Warm-up 20% / Builder 21% / Peak 29% / Closer 31%.
+#
+# The soft-Peak gate (peak_level_soft + peak_intensity) is intentionally
+# DISABLED here (both set to 0.99 so the branch never fires): this library
+# is uniformly bass-heavy, so intensity_index barely varies and the gate
+# only mislabeled mid-energy tracks as Peak. The mechanism is kept in code
+# so a future library with more dynamic range can re-enable it via these
+# constants without a code change.
+ROLE_THRESHOLDS = {
+    "peak_level":      0.85,   # arc_level at or above this is Peak
+    "peak_level_soft": 0.99,   # soft-Peak gate disabled (see note above)
+    "peak_intensity":  0.99,   # soft-Peak gate disabled (see note above)
+    "rising":          0.03,   # arc_momentum at or above this is Builder (~p75)
+    "falling":        -0.02,   # arc_momentum at or below this is Closer (~p25)
+    "release_valence": 0.66,   # flat momentum plus bright/released is Closer
+    "release_bright":  0.60,   # normalized brightness release cut (~1930 Hz)
+}
+
+ROLE_WARMUP = "Warm-up"
+ROLE_BUILDER = "Builder"
+ROLE_PEAK = "Peak"
+ROLE_CLOSER = "Closer"

@@ -49,12 +49,15 @@ def scan_library(
         # String fields
         record["bpm"] = tags.get("bpm", "")
         record["key"] = tags.get("key", "")
+        record["set_role"] = tags.get("set_role", "")
 
         # Numeric fields — convert to float or None
         for key in ("energy", "valence", "mood_happy", "mood_sad",
                      "mood_aggressive", "mood_relaxed",
                      "danceability", "arousal",
-                     "peak_energy", "intro_energy", "energy_variance"):
+                     "peak_energy", "intro_energy", "energy_variance",
+                     "arc_level", "arc_momentum", "spectral_centroid",
+                     "onset_rate", "dynamic_range", "sub_bass"):
             raw = tags.get(key, "")
             record[key] = float(raw) if raw else None
 

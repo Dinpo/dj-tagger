@@ -73,6 +73,14 @@ def read_tags(filepath: str) -> dict:
         "peak_energy": "",
         "intro_energy": "",
         "energy_variance": "",
+        # v6 fields
+        "set_role": "",
+        "arc_level": "",
+        "arc_momentum": "",
+        "spectral_centroid": "",
+        "onset_rate": "",
+        "dynamic_range": "",
+        "sub_bass": "",
     }
     try:
         tags = ID3(filepath)
@@ -115,6 +123,14 @@ def read_tags(filepath: str) -> dict:
         "PEAK_ENERGY": "peak_energy",
         "INTRO_ENERGY": "intro_energy",
         "ENERGY_VARIANCE": "energy_variance",
+        # v6 tags
+        "SET_ROLE": "set_role",
+        "ARC_LEVEL": "arc_level",
+        "ARC_MOMENTUM": "arc_momentum",
+        "SPECTRAL_CENTROID": "spectral_centroid",
+        "ONSET_RATE": "onset_rate",
+        "DYNAMIC_RANGE": "dynamic_range",
+        "SUB_BASS": "sub_bass",
     }
     for frame in tags.getall("TXXX"):
         if frame.desc in tag_map:
@@ -220,31 +236,36 @@ def _merge_genres(
 def _build_comment(
     energy: float,
     valence: float,
+    set_role: str = "",
     danceability: float = 0.0,
     peak_energy: float = 0.0,
     arousal: float = 0.0,
     aggressive: float = 0.0,
     intro_energy: float = 0.0,
+    arc_level: float = 0.0,
+    arc_momentum: float = 0.0,
 ) -> tuple[str, str]:
     """Build human-readable comment and detail string."""
     e_lbl = "Low" if energy < 0.4 else "Mid" if energy < 0.7 else "High"
     # Valence thresholds tuned for electronic/dance music distribution
-    # (median ~0.63, range ~0.45–0.80); the 0–1 model range is rarely exercised.
+    # (median ~0.63, range ~0.45-0.80); the 0-1 model range is rarely exercised.
     v_lbl = "Dark" if valence < 0.58 else "Neutral" if valence < 0.68 else "Bright"
-    d_lbl = "Low" if danceability < 0.4 else "Mid" if danceability < 0.7 else "High"
     agg_lbl = "Soft" if aggressive < 0.25 else "Mid" if aggressive < 0.5 else "Hard"
     intro_lbl = "Quiet" if intro_energy < 0.5 else "Mid" if intro_energy < 0.75 else "Hot"
 
-    # Visible in Serato/rekordbox
+    # Role goes first so it is the glanceable thing in Serato. Danceability is
+    # dropped from the visible comment (near-constant across this library) but
+    # kept in the hidden detail below.
+    role_part = f"Role: {set_role} | " if set_role else ""
     comment = (
-        f"Energy: {e_lbl} | Mood: {v_lbl} | Edge: {agg_lbl} | "
-        f"Peak: {peak_energy:.2f} | Intro: {intro_lbl} | Dance: {d_lbl}"
+        f"{role_part}Energy: {e_lbl} | Mood: {v_lbl} | Edge: {agg_lbl} | "
+        f"Peak: {peak_energy:.2f} | Intro: {intro_lbl}"
     )
 
-    # Hidden detail comment
     detail = (
         f"E:{energy} | V:{valence} | Agg:{aggressive} | "
-        f"Peak:{peak_energy} | Intro:{intro_energy} | D:{danceability} | Arousal:{arousal}"
+        f"Peak:{peak_energy} | Intro:{intro_energy} | D:{danceability} | "
+        f"Arousal:{arousal} | Lvl:{arc_level} | Mom:{arc_momentum}"
     )
 
     return comment, detail
@@ -317,6 +338,14 @@ def write_tags(
             ("PEAK_ENERGY", result["peak_energy"]),
             ("INTRO_ENERGY", result["intro_energy"]),
             ("ENERGY_VARIANCE", result["energy_variance"]),
+            # v6 tags
+            ("SET_ROLE", result["set_role"]),
+            ("ARC_LEVEL", result["arc_level"]),
+            ("ARC_MOMENTUM", result["arc_momentum"]),
+            ("SPECTRAL_CENTROID", result["spectral_centroid"]),
+            ("ONSET_RATE", result["onset_rate"]),
+            ("DYNAMIC_RANGE", result["dynamic_range"]),
+            ("SUB_BASS", result["sub_bass"]),
         ]:
             tags.delall(f"TXXX:{key}")
             tags.add(TXXX(encoding=3, desc=key, text=[str(val)]))
@@ -328,11 +357,14 @@ def write_tags(
         comment, detail = _build_comment(
             energy=result["energy"],
             valence=result["valence"],
+            set_role=result.get("set_role", ""),
             danceability=result.get("danceability", 0.0),
             peak_energy=result.get("peak_energy", 0.0),
             arousal=result.get("arousal", 0.0),
             aggressive=result["moods"]["aggressive"],
             intro_energy=result.get("intro_energy", 0.0),
+            arc_level=result.get("arc_level", 0.0),
+            arc_momentum=result.get("arc_momentum", 0.0),
         )
         tags.delall("COMM::eng")
         tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
@@ -415,9 +447,17 @@ def fix_comments(filepath: str) -> str:
         intro_tag = tags.get("TXXX:INTRO_ENERGY")
         intro = float(intro_tag.text[0]) if intro_tag and intro_tag.text else 0.0
 
+        role_tag = tags.get("TXXX:SET_ROLE")
+        role = role_tag.text[0] if role_tag and role_tag.text else ""
+        lvl_tag = tags.get("TXXX:ARC_LEVEL")
+        lvl = float(lvl_tag.text[0]) if lvl_tag and lvl_tag.text else 0.0
+        mom_tag = tags.get("TXXX:ARC_MOMENTUM")
+        mom = float(mom_tag.text[0]) if mom_tag and mom_tag.text else 0.0
+
         comment, detail = _build_comment(
-            energy=e, valence=v, danceability=d, peak_energy=p, arousal=a,
-            aggressive=agg, intro_energy=intro,
+            energy=e, valence=v, set_role=role, danceability=d, peak_energy=p,
+            arousal=a, aggressive=agg, intro_energy=intro, arc_level=lvl,
+            arc_momentum=mom,
         )
 
         tags.delall("COMM::eng")
