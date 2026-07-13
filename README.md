@@ -191,8 +191,8 @@ Shows all DJ Tagger tags with colored bars for energy, valence, and mood scores:
  🔥 Aggressive        ██████████░░░░░  0.673
  😌 Relaxed           ████░░░░░░░░░░░  0.258
 
- Comment              Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot | Dance: High
- Tagger version       v4
+ Comment              Role: Peak | Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot
+ Tagger version       v6
 ```
 
 ### Library statistics
@@ -592,7 +592,7 @@ Log files are overwritten on each `tag` run (not appended).
 {
   "state": "running",
   "mode": "TAGGING",
-  "version": "v4",
+  "version": "v6",
   "total": 3312,
   "to_process": 150,
   "skipped": 3162,
