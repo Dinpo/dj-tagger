@@ -22,7 +22,7 @@ LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────
 
-TAGGER_VERSION = "v5"
+TAGGER_VERSION = "v6"
 
 # Genres considered generic / empty — will be replaced
 GENERIC_GENRES = {"other", "unknown", "misc", "music", ""}
@@ -174,3 +174,32 @@ ENERGY_OFFSET = 0.05
 
 SEGMENT_LENGTH_SEC = 30   # embedding frames per segment (~1 frame/sec)
 SEGMENT_HOP_SEC = 15      # hop between segments
+
+# ─── Set-Role Classification (v6) ──────────────────────────
+# Raw-feature normalization ranges (lo, hi) mapped to 0..1.
+# PROVISIONAL. Replaced by scripts/calibrate_arc.py output (Task 5).
+FEATURE_RANGE = {
+    "spectral_centroid": (800.0, 3500.0),   # Hz on 16 kHz audio
+    "onset_rate":        (0.5, 6.0),         # onsets per second
+    "dynamic_range":     (3.0, 18.0),        # dB (p90 minus p10 frame RMS)
+    "sub_bass":          (0.05, 0.45),       # fraction of energy below 120 Hz
+}
+
+# Per-segment energy slope is multiplied by this, then clipped to [-1, 1].
+MOMENTUM_SCALE = 8.0
+
+# Role decision thresholds. PROVISIONAL. Replaced by calibration (Task 5).
+ROLE_THRESHOLDS = {
+    "peak_level":      0.80,   # arc_level at or above this is Peak
+    "peak_level_soft": 0.72,   # softer Peak gate, needs intensity too
+    "peak_intensity":  0.65,   # intensity_index required for the soft-Peak gate
+    "rising":          0.15,   # arc_momentum at or above this is Builder
+    "falling":        -0.15,   # arc_momentum at or below this is Closer
+    "release_valence": 0.66,   # flat momentum plus bright/released is Closer
+    "release_bright":  0.60,   # normalized brightness release cut
+}
+
+ROLE_WARMUP = "Warm-up"
+ROLE_BUILDER = "Builder"
+ROLE_PEAK = "Peak"
+ROLE_CLOSER = "Closer"
