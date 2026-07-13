@@ -25,6 +25,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 - [How It Works](#how-it-works)
   - [Audio Analysis Pipeline](#audio-analysis-pipeline)
   - [Energy and Valence Formulas](#energy-and-valence-formulas)
+  - [Set Role](#set-role)
   - [3-Tier Genre Resolution](#3-tier-genre-resolution)
   - [Remix-Aware Matching](#remix-aware-matching)
 - [ID3 Tags Written](#id3-tags-written)
@@ -395,6 +396,32 @@ energy     = min(1.0, raw_energy × 1.5 + 0.3)
 valence = clamp((happy - sad + 1) / 2, 0, 1)
 ```
 
+### Set Role
+
+Each track is classified into one of four DJ set roles and written as the first field of the visible comment:
+
+- **Warm-up** - low energy, flat or settled, darker: an opener.
+- **Builder** - mid/low energy that rises within the track (positive internal momentum), tenser and driving.
+- **Peak** - high energy, the top-energy tracks: the bangers.
+- **Closer** - mid/low energy that is flat or falling and brighter/released (melodic, end-of-night).
+
+The classification uses two axes, both written as tags:
+
+- `arc_level` (0-1) - overall intensity, derived from the existing blended energy score.
+- `arc_momentum` (-1 to +1) - the track's internal energy trajectory, a normalized least-squares slope over its per-segment energy array. Positive means the track rises across its length, negative means it falls, near-zero means flat.
+
+Four low-level DSP features feed the model, computed cheaply from the same 16 kHz mono audio the analyzer already loads (no extra file decode, no Essentia): spectral centroid (brightness), onset rate (percussive density/drive), dynamic range (quiet-loud contrast in dB), and sub-bass ratio (fraction of energy below 120 Hz).
+
+The role decision, evaluated in order (thresholds calibrated against the library, stored in `config.py` as `ROLE_THRESHOLDS` / `FEATURE_RANGE`):
+
+1. `arc_level >= 0.85` -> **Peak**
+2. else `arc_momentum >= 0.03` -> **Builder**
+3. else `arc_momentum <= -0.02` -> **Closer**
+4. else (flat) if valence or brightness is high (released/bright) -> **Closer**
+5. else -> **Warm-up**
+
+On the calibration library this yields roughly Warm-up 20% / Builder 21% / Peak 29% / Closer 31%.
+
 ### 3-Tier Genre Resolution
 
 Genre detection tries three sources in priority order, stopping at the first hit:
@@ -440,7 +467,7 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Genre | `TCON` | Genre string | Only replaces generic genres (see below) |
 | Energy | `TXXX:ENERGY` | Score 0–1 | Weighted blend: danceability + arousal + aggressive + relaxed |
 | Valence | `TXXX:VALENCE` | Score 0–1 | From emomusic arousal/valence model |
-| Danceability | `TXXX:DANCEABILITY` | Score 0–1 | Dedicated danceability model |
+| Danceability | `TXXX:DANCEABILITY` | Score 0–1 | Dedicated danceability model; still computed and tagged, but no longer shown in the visible comment (near-constant across this library) |
 | Arousal | `TXXX:AROUSAL` | Score 0–1 | From emomusic model (normalized) |
 | Peak energy | `TXXX:PEAK_ENERGY` | Score 0–1 | Highest energy across ~30s segments |
 | Intro energy | `TXXX:INTRO_ENERGY` | Score 0–1 | Energy of the first ~30s |
@@ -453,8 +480,15 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Album | `TALB` | e.g. `Offender Remixes` | Filled from Beatport; replaces empty or URL/promo-junk existing values, preserves legit ones |
 | Year | `TDRC` | e.g. `2022` | Filled from Beatport; replaces invalid-year existing values, preserves valid years |
 | Genre detected | `TXXX:GENRE_DETECTED` | Full detected genre string | Stored even if TCON was preserved |
-| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v5` | For tracking re-tag needs |
-| Comment | `COMM::eng` | `Energy: High \| Mood: Bright \| Edge: Hard \| Peak: 0.98 \| Intro: Hot \| Dance: High` | Human-readable, visible in Serato/rekordbox |
+| Set role | `TXXX:SET_ROLE` | `Warm-up`, `Builder`, `Peak`, or `Closer` | See [Set Role](#set-role) |
+| Arc level | `TXXX:ARC_LEVEL` | Score 0-1 | Overall intensity, derived from energy |
+| Arc momentum | `TXXX:ARC_MOMENTUM` | Score -1 to +1 | Internal energy trajectory (rising/falling/flat) |
+| Spectral centroid | `TXXX:SPECTRAL_CENTROID` | Raw value | Brightness, low-level DSP feature |
+| Onset rate | `TXXX:ONSET_RATE` | Raw value | Percussive density/drive, low-level DSP feature |
+| Dynamic range | `TXXX:DYNAMIC_RANGE` | Value in dB | Quiet-loud contrast, low-level DSP feature |
+| Sub-bass ratio | `TXXX:SUB_BASS` | Score 0-1 | Fraction of energy below 120 Hz |
+| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v6` | For tracking re-tag needs |
+| Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Human-readable, visible in Serato/rekordbox |
 | Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
 All other existing ID3 frames (BPM, key, Serato cues, artwork, etc.) are left untouched.
@@ -478,7 +512,7 @@ Regardless of what ends up in `TCON`, the full detected genre string is always a
 
 ### Comment Format
 
-The human-readable comment (`COMM::eng`) uses these labels:
+The human-readable comment (`COMM::eng`) leads with the set role (see [Set Role](#set-role)), followed by these labels:
 
 | Metric | Range | Label |
 |--------|-------|-------|
@@ -494,15 +528,14 @@ The human-readable comment (`COMM::eng`) uses these labels:
 | Intro energy (Intro) | < 0.5 | Quiet |
 | Intro energy (Intro) | 0.5 – 0.75 | Mid |
 | Intro energy (Intro) | ≥ 0.75 | Hot |
-| Danceability (Dance) | < 0.4 | Low |
-| Danceability (Dance) | 0.4 – 0.7 | Mid |
-| Danceability (Dance) | > 0.7 | High |
 
 Mood thresholds are tuned for electronic/dance music, where valence values cluster 0.45–0.80 — the 0–1 theoretical range is rarely exercised in practice.
 
 Peak energy is shown as a raw number (e.g., `Peak: 0.98`) for precision.
 
-Example: `Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot | Dance: High`
+Danceability is no longer part of the visible comment (it's near-constant across this library, so it carries little signal there), but it is still computed and written to the `DANCEABILITY` tag.
+
+Example: `Role: Builder | Energy: Mid | Mood: Neutral | Edge: Soft | Peak: 0.95 | Intro: Mid`
 
 ## Configuration
 
