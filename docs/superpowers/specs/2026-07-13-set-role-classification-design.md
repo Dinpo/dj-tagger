@@ -94,6 +94,10 @@ Before committing any threshold:
 
 1. Run the new feature extraction over a sample of the library
    (`/Volumes/Multimedia/Music/_DJ Music`) — a few hundred tracks is enough.
+   **Sample across eras**: the root directory holds the oldest tracks, so the
+   sample must also pull from the newer dated subfolders. Otherwise the
+   distribution skews toward one production era and the calibrated thresholds
+   generalize poorly.
 2. Dump per-feature distributions: min/median/max, key percentiles (p10, p25,
    p50, p75, p90), and coarse histograms.
 3. Decide the 16 kHz-vs-44.1 kHz centroid question from the spread.
