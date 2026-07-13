@@ -53,34 +53,19 @@ Create `tests/__init__.py` as an empty file.
 Create `tests/test_smoke.py`:
 
 ```python
-"""Smoke test: the package and its numpy-only modules import cleanly."""
+"""Smoke test: the package imports cleanly and pytest is wired up."""
 
 
 def test_package_imports():
     import djtagger
 
     assert djtagger.__version__
-
-
-def test_pure_modules_import_without_essentia():
-    # dsp and classify must not pull in Essentia.
-    import importlib
-    import sys
-
-    for mod in ("djtagger.dsp", "djtagger.classify"):
-        # These modules do not exist yet in Task 1; skip if missing so the
-        # smoke test is green now and meaningful once they land.
-        try:
-            importlib.import_module(mod)
-        except ModuleNotFoundError:
-            continue
-        assert "essentia" not in sys.modules or True  # essentia not required to import
 ```
 
 - [ ] **Step 4: Run the smoke test**
 
 Run: `.venv/bin/pytest tests/test_smoke.py -v`
-Expected: PASS (2 passed)
+Expected: PASS (1 passed)
 
 - [ ] **Step 5: Commit**
 
