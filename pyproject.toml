@@ -20,6 +20,9 @@ dependencies = [
     "curl_cffi>=0.7",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
 [project.scripts]
 djtagger = "djtagger.cli:app"
 
