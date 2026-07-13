@@ -22,6 +22,7 @@ from .config import (
     SEGMENT_HOP_SEC,
     CAMELOT_MAP,
 )
+from . import classify
 
 # ─── Genre label caches ──────────────────────────────────────
 
@@ -352,6 +353,18 @@ def analyze_track(
     # Blend: 70% average + 30% peak
     energy = round(float(np.clip(raw_energy * 0.7 + peak_energy * 0.3, 0, 1)), 3)
 
+    # Set-role classification (v6). Reuses the 16 kHz audio already in memory.
+    try:
+        arc = classify.compute_arc(
+            audio, 16000, segment_energies, energy, valence_norm,
+        )
+    except Exception:
+        arc = {
+            "spectral_centroid": 0.0, "onset_rate": 0.0, "dynamic_range": 0.0,
+            "sub_bass": 0.0, "arc_level": energy, "arc_momentum": 0.0,
+            "set_role": classify.ROLE_WARMUP,
+        }
+
     return {
         "genres": genres,
         "electronic_genres": electronic_genres,
@@ -364,6 +377,13 @@ def analyze_track(
         "peak_energy": peak_energy,
         "intro_energy": intro_energy,
         "energy_variance": energy_variance,
+        "spectral_centroid": arc["spectral_centroid"],
+        "onset_rate": arc["onset_rate"],
+        "dynamic_range": arc["dynamic_range"],
+        "sub_bass": arc["sub_bass"],
+        "arc_level": arc["arc_level"],
+        "arc_momentum": arc["arc_momentum"],
+        "set_role": arc["set_role"],
         "bpm": bpm,
         "key": key_str,
         "key_strength": key_strength,
