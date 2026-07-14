@@ -177,17 +177,19 @@ SEGMENT_HOP_SEC = 15      # hop between segments
 
 # ─── Set-Role Classification (v7) ──────────────────────────
 # Raw-feature normalization ranges (lo, hi) mapped to 0..1.
-# Existing four calibrated 2026-07-14 on a 1500-track sample (p10..p90);
-# flux/vocal/outro_fade/rise are PROVISIONAL pending the v7 calibration pass.
+# First four calibrated 2026-07-14 on a 1500-track sample (p10..p90);
+# flux/vocal/outro_fade/rise/valence calibrated 2026-07-15 on a 150-track
+# sample run through the full v7 pipeline (p10..p90 of each feature).
 FEATURE_RANGE = {
     "spectral_centroid": (1422.0, 2342.0),   # Hz on 16 kHz audio (p10..p90)
     "onset_rate":        (2.49, 3.90),        # onsets per second (p10..p90)
     "dynamic_range":     (9.2, 18.9),         # dB; metric is p90-p10 of frame RMS. Range below is that metric's p10..p90 across library
     "sub_bass":          (0.51, 0.81),        # fraction of energy below 120 Hz (p10..p90)
-    "flux":              (0.27, 0.40),        # mean normalized spectral flux
-    "vocal":             (0.05, 0.55),        # voice_instrumental model, mean voice prob
-    "outro_fade":        (2.0, 20.0),         # dB the outro sits below the peak (-outro_db)
-    "rise":              (0.0, 6.0),          # positive loudness slope, dB per track
+    "flux":              (0.29, 0.38),        # mean normalized spectral flux
+    "vocal":             (0.07, 0.73),        # voice_instrumental model, mean voice prob
+    "outro_fade":        (3.3, 27.3),         # dB the outro sits below the peak (-outro_db)
+    "rise":              (0.0, 4.0),          # positive loudness slope, dB per track
+    "valence":           (0.538, 0.716),      # emomusic valence (p10..p90)
 }
 
 # Per-segment energy slope is multiplied by this, then clipped to [-1, 1].

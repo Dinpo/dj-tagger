@@ -72,7 +72,7 @@ def drive_emo(flux, onset_rate, slope, valence, centroid, outro_db, vocal):
         + _normalize(max(0.0, slope), *FEATURE_RANGE["rise"])
     ) / 3.0
     emo = (
-        _normalize(valence, 0.536, 0.730)  # library valence p10..p90
+        _normalize(valence, *FEATURE_RANGE["valence"])
         + _normalize(centroid, *FEATURE_RANGE["spectral_centroid"])
         + _normalize(vocal, *FEATURE_RANGE["vocal"])
         + _normalize(-outro_db, *FEATURE_RANGE["outro_fade"])
