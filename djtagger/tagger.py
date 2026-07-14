@@ -81,6 +81,16 @@ def read_tags(filepath: str) -> dict:
         "onset_rate": "",
         "dynamic_range": "",
         "sub_bass": "",
+        # v7 fields
+        "flux": "",
+        "vocal": "",
+        "intro_db": "",
+        "outro_db": "",
+        "arc_slope": "",
+        "drop_db": "",
+        "peak_pos": "",
+        "drive": "",
+        "emo": "",
     }
     try:
         tags = ID3(filepath)
@@ -131,6 +141,16 @@ def read_tags(filepath: str) -> dict:
         "ONSET_RATE": "onset_rate",
         "DYNAMIC_RANGE": "dynamic_range",
         "SUB_BASS": "sub_bass",
+        # v7 tags
+        "FLUX": "flux",
+        "VOCAL": "vocal",
+        "INTRO_DB": "intro_db",
+        "OUTRO_DB": "outro_db",
+        "ARC_SLOPE": "arc_slope",
+        "DROP_DB": "drop_db",
+        "PEAK_POS": "peak_pos",
+        "DRIVE": "drive",
+        "EMO": "emo",
     }
     for frame in tags.getall("TXXX"):
         if frame.desc in tag_map:
@@ -346,6 +366,16 @@ def write_tags(
             ("ONSET_RATE", result["onset_rate"]),
             ("DYNAMIC_RANGE", result["dynamic_range"]),
             ("SUB_BASS", result["sub_bass"]),
+            # v7 tags
+            ("FLUX", result.get("flux", 0.0)),
+            ("VOCAL", result.get("vocal", 0.0)),
+            ("INTRO_DB", result.get("intro_db", 0.0)),
+            ("OUTRO_DB", result.get("outro_db", 0.0)),
+            ("ARC_SLOPE", result.get("arc_slope", 0.0)),
+            ("DROP_DB", result.get("drop_db", 0.0)),
+            ("PEAK_POS", result.get("peak_pos", 0.5)),
+            ("DRIVE", result.get("drive", 0.0)),
+            ("EMO", result.get("emo", 0.0)),
         ]:
             tags.delall(f"TXXX:{key}")
             tags.add(TXXX(encoding=3, desc=key, text=[str(val)]))

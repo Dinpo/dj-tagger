@@ -154,6 +154,14 @@ def load_models(model_dir: str | None = None) -> dict:
         output="model/Softmax",
     )
 
+    # Voice/instrumental head (v7): vocal presence feeds the set-role split
+    models["voice"] = _try_load(
+        es.TensorflowPredict2D,
+        f"{d}/voice_instrumental-discogs-effnet-1.pb",
+        input="model/Placeholder",
+        output="model/Softmax",
+    )
+
     # TempoCNN for precise BPM detection
     models["tempo_cnn"] = _try_load(
         es.TensorflowPredictTempoCNN,
@@ -193,7 +201,9 @@ def analyze_track(
     Returns dict with keys: genres, electronic_genres, moods, danceability,
     arousal, valence, energy, raw_energy, peak_energy, intro_energy,
     energy_variance, spectral_centroid, onset_rate, dynamic_range, sub_bass,
-    arc_level, arc_momentum, set_role, bpm, key, key_strength, duration.
+    flux, vocal, intro_db, outro_db, arc_slope, drop_db, peak_pos,
+    arc_level, arc_momentum, drive, emo, set_role, bpm, key, key_strength,
+    duration.
     """
     audio = es.MonoLoader(filename=filepath, sampleRate=16000)()
     embeddings = models["embed"](audio)
@@ -354,16 +364,30 @@ def analyze_track(
     # Blend: 70% average + 30% peak
     energy = round(float(np.clip(raw_energy * 0.7 + peak_energy * 0.3, 0, 1)), 3)
 
-    # Set-role classification (v6). Reuses the 16 kHz audio already in memory.
+    # ─── Vocal presence (v7, reuses the EffNet embeddings) ──
+    vocal = 0.0
+    try:
+        if models.get("voice") is not None:
+            voice_preds = models["voice"](embeddings)
+            # classes are [instrumental, voice]; index 1 = voice probability
+            vocal = round(float(np.mean(voice_preds, axis=0)[1]), 3)
+    except Exception:
+        vocal = 0.0
+
+    # Set-role classification (v7). Reuses the 16 kHz audio already in memory.
     try:
         arc = classify.compute_arc(
-            audio, 16000, segment_energies, energy, valence_norm,
+            audio, 16000, segment_energies, energy, valence_norm, vocal,
         )
     except Exception:
         arc = {
             "spectral_centroid": 0.0, "onset_rate": 0.0, "dynamic_range": 0.0,
-            "sub_bass": 0.0, "arc_level": energy, "arc_momentum": 0.0,
-            "set_role": classify.ROLE_WARMUP,
+            "sub_bass": 0.0, "flux": 0.0, "vocal": vocal,
+            "intro_db": 0.0, "outro_db": 0.0, "arc_slope": 0.0,
+            "drop_db": 0.0, "peak_pos": 0.5,
+            "arc_level": energy, "arc_momentum": 0.0,
+            "drive": 0.0, "emo": 0.0,
+            "set_role": classify.ROLE_OPENER,
         }
 
     return {
@@ -382,8 +406,17 @@ def analyze_track(
         "onset_rate": arc["onset_rate"],
         "dynamic_range": arc["dynamic_range"],
         "sub_bass": arc["sub_bass"],
+        "flux": arc["flux"],
+        "vocal": arc["vocal"],
+        "intro_db": arc["intro_db"],
+        "outro_db": arc["outro_db"],
+        "arc_slope": arc["arc_slope"],
+        "drop_db": arc["drop_db"],
+        "peak_pos": arc["peak_pos"],
         "arc_level": arc["arc_level"],
         "arc_momentum": arc["arc_momentum"],
+        "drive": arc["drive"],
+        "emo": arc["emo"],
         "set_role": arc["set_role"],
         "bpm": bpm,
         "key": key_str,

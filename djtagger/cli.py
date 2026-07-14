@@ -441,6 +441,16 @@ def _tag_inner(
                 _log(f"  ⚠ Genre resolution failed: {ex}")
                 final_genres, genre_source, album, year = [], "ml", "", ""
 
+            # Genre-aware role: once the genre is known, re-decide the role
+            # using within-genre energy bands when a stats table exists
+            # (djtagger genre-stats). Falls back to the global-band role.
+            try:
+                from . import classify
+                role_genre = final_genres[0] if final_genres else ""
+                result["set_role"] = classify.decide_role(result, role_genre)
+            except Exception:
+                pass
+
             src_icon = SOURCE_ICONS.get(genre_source, "")
             src_color = SOURCE_COLORS.get(genre_source, "white")
             genre_str = "; ".join(final_genres[:4]) if final_genres else "(none)"
@@ -575,15 +585,19 @@ def info(
     if tags.get("bpm") or tags.get("key"):
         table.add_row("", "")
 
-    # Set role (v6): shown first, it is the headline for crate-digging.
+    # Set role (v7): shown first, it is the headline for crate-digging.
     if tags.get("set_role"):
         table.add_row("Set role", f"[bold]{tags['set_role']}[/bold]")
         if tags.get("arc_level"):
             al = float(tags["arc_level"])
             table.add_row("Arc level", f"{_mini_bar(al)}  {al:.3f}")
-        if tags.get("arc_momentum"):
-            am = float(tags["arc_momentum"])
-            table.add_row("Arc momentum", f"{am:+.3f}")
+        if tags.get("drive") and tags.get("emo"):
+            d = float(tags["drive"])
+            e = float(tags["emo"])
+            table.add_row("Drive / Emo", f"{d:.2f} / {e:.2f}")
+        if tags.get("vocal"):
+            vo = float(tags["vocal"])
+            table.add_row("Vocals", f"{_mini_bar(vo)}  {vo:.3f}")
         table.add_row("", "")
 
     # Energy & Mood
@@ -1114,6 +1128,8 @@ def export(
         "peak_energy", "intro_energy", "energy_variance",
         "set_role", "arc_level", "arc_momentum",
         "spectral_centroid", "onset_rate", "dynamic_range", "sub_bass",
+        "flux", "vocal", "intro_db", "outro_db",
+        "arc_slope", "drop_db", "peak_pos", "drive", "emo",
         "tagger_version", "comment",
     ]
 
@@ -1142,6 +1158,71 @@ def export(
         sys.stdout.write(output.getvalue())
 
     err_console.print(f"[bold green]Exported {len(tracks)} tracks as {fmt.upper()}[/bold green]")
+
+
+# ═════════════════════════════════════════════════════════════
+#  GENRE-STATS command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command("genre-stats")
+def genre_stats(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Library folder to scan (reads existing tags, no audio analysis)",
+    ),
+) -> None:
+    """Build the per-genre energy table used for genre-relative set roles.
+
+    Scans the tagged library, groups ENERGY values by primary genre, and
+    writes a quantile table next to the ML models. Once it exists, `tag`
+    decides set roles from each track's energy percentile WITHIN its genre.
+    Re-run after large library changes to keep the table fresh.
+    """
+    import json as _json
+    import numpy as np
+    from .classify import primary_genre
+    from .config import GENRE_STATS_FILE, ROLE_THRESHOLDS
+
+    tracks = _scan_with_progress(path)
+    by_genre: dict[str, list[float]] = {}
+    for t in tracks:
+        if t["energy"] is None or not t["genre"]:
+            continue
+        g = primary_genre(t["genre"])
+        if g:
+            by_genre.setdefault(g, []).append(t["energy"])
+
+    stats: dict[str, dict] = {}
+    for g, energies in by_genre.items():
+        if len(energies) < 5:
+            continue
+        q = [round(float(np.percentile(energies, p)), 4) for p in range(0, 101, 5)]
+        stats[g] = {"n": len(energies), "q": q}
+
+    os.makedirs(os.path.dirname(GENRE_STATS_FILE), exist_ok=True)
+    with open(GENRE_STATS_FILE, "w") as f:
+        _json.dump(stats, f, indent=1)
+
+    min_n = ROLE_THRESHOLDS["genre_min_n"]
+    usable = sum(1 for s in stats.values() if s["n"] >= min_n)
+    table = Table(box=box.SIMPLE_HEAVY, border_style="dim", padding=(0, 1))
+    table.add_column("Genre", style="cyan")
+    table.add_column("Tracks", justify="right")
+    table.add_column("E p25", justify="right")
+    table.add_column("E p50", justify="right")
+    table.add_column("E p75", justify="right")
+    table.add_column("Role bands", justify="center")
+    for g, s in sorted(stats.items(), key=lambda kv: -kv[1]["n"])[:25]:
+        active = "[green]genre[/green]" if s["n"] >= min_n else "[dim]global[/dim]"
+        table.add_row(g, str(s["n"]), f"{s['q'][5]:.2f}", f"{s['q'][10]:.2f}",
+                      f"{s['q'][15]:.2f}", active)
+    console.print(table)
+    console.print(
+        f"\n[bold green]Wrote {len(stats)} genres[/bold green] "
+        f"({usable} large enough for genre-relative bands, min {min_n} tracks) "
+        f"to [dim]{GENRE_STATS_FILE}[/dim]"
+    )
 
 
 # ═════════════════════════════════════════════════════════════
