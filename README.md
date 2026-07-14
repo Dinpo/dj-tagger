@@ -192,7 +192,7 @@ Shows all DJ Tagger tags with colored bars for energy, valence, and mood scores:
  😌 Relaxed           ████░░░░░░░░░░░  0.258
 
  Comment              Role: Peak | Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot
- Tagger version       v6
+ Tagger version       v7
 ```
 
 ### Library statistics
@@ -400,27 +400,16 @@ valence = clamp((happy - sad + 1) / 2, 0, 1)
 
 Each track is classified into one of four DJ set roles and written as the first field of the visible comment:
 
-- **Warm-up** - low energy, flat or settled, darker: an opener.
-- **Builder** - mid/low energy that rises within the track (positive internal momentum), tenser and driving.
-- **Peak** - high energy, the top-energy tracks: the bangers.
-- **Closer** - mid/low energy that is flat or falling and brighter/released (melodic, end-of-night).
+- **Opener** (energy 3-5): hypnotic, deep, atmospheric; low activity, no heavy drops.
+- **Builder** (energy 6-7): driving, urgent, rising; promises something bigger is coming.
+- **Peak** (energy 8-10): maximum intensity; drops, aggressive rhythms, big hooks.
+- **Closer** (energy 5-7): emotional, anthemic, melodic; sing-along vocals, fading finale.
 
-The classification uses two axes, both written as tags:
+Energy bands decide Opener vs Peak. Builder and Closer share the mid band and are split by character: a **drive** index (spectral flux, onset rate, rising loudness) against an **emo** index (valence, brightness, vocal presence, fading outro). Both indices are written as tags (`DRIVE`, `EMO`), alongside the raw features that feed them: spectral flux, vocal presence (voice/instrumental model on the existing EffNet embeddings), and a loudness-arc analysis of the track's envelope (intro/outro depth in dB, loudness slope, breakdown-to-drop height, peak position).
 
-- `arc_level` (0-1) - overall intensity, derived from the existing blended energy score.
-- `arc_momentum` (-1 to +1) - the track's internal energy trajectory, a normalized least-squares slope over its per-segment energy array. Positive means the track rises across its length, negative means it falls, near-zero means flat.
+**Genre-relative bands:** run `djtagger genre-stats` once to build a per-genre energy table from the tagged library. When a track's genre cohort is large enough (30+ tracks), its energy band comes from the track's percentile *within its own genre*, so a melodic-house peak is not measured against the whole library's hardest tracks. Without the table (or for small genres), global energy cutoffs apply (`opener_level` 0.55, `peak_level` 0.80 on `arc_level`).
 
-Four low-level DSP features feed the model, computed cheaply from the same 16 kHz mono audio the analyzer already loads (no extra file decode, no Essentia): spectral centroid (brightness), onset rate (percussive density/drive), dynamic range (quiet-loud contrast in dB), and sub-bass ratio (fraction of energy below 120 Hz).
-
-The role decision, evaluated in order (thresholds calibrated against the library, stored in `config.py` as `ROLE_THRESHOLDS` / `FEATURE_RANGE`):
-
-1. `arc_level >= 0.85` -> **Peak**
-2. else `arc_momentum >= 0.03` -> **Builder**
-3. else `arc_momentum <= -0.02` -> **Closer**
-4. else (flat) if valence or brightness is high (released/bright) -> **Closer**
-5. else -> **Warm-up**
-
-On the calibration library this yields roughly Warm-up 20% / Builder 21% / Peak 29% / Closer 31%.
+All thresholds and normalization ranges are calibrated against the library and stored in `config.py` (`ROLE_THRESHOLDS` / `FEATURE_RANGE`). On the calibration sample this yields roughly Opener 33% / Builder 21% / Peak 24% / Closer 22%.
 
 ### 3-Tier Genre Resolution
 
@@ -480,14 +469,23 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Album | `TALB` | e.g. `Offender Remixes` | Filled from Beatport; replaces empty or URL/promo-junk existing values, preserves legit ones |
 | Year | `TDRC` | e.g. `2022` | Filled from Beatport; replaces invalid-year existing values, preserves valid years |
 | Genre detected | `TXXX:GENRE_DETECTED` | Full detected genre string | Stored even if TCON was preserved |
-| Set role | `TXXX:SET_ROLE` | `Warm-up`, `Builder`, `Peak`, or `Closer` | See [Set Role](#set-role) |
+| Set role | `TXXX:SET_ROLE` | `Opener`, `Builder`, `Peak`, or `Closer` | See [Set Role](#set-role) |
 | Arc level | `TXXX:ARC_LEVEL` | Score 0-1 | Overall intensity, derived from energy |
 | Arc momentum | `TXXX:ARC_MOMENTUM` | Score -1 to +1 | Internal energy trajectory (rising/falling/flat) |
 | Spectral centroid | `TXXX:SPECTRAL_CENTROID` | Raw value | Brightness, low-level DSP feature |
 | Onset rate | `TXXX:ONSET_RATE` | Raw value | Percussive density/drive, low-level DSP feature |
 | Dynamic range | `TXXX:DYNAMIC_RANGE` | Value in dB | Quiet-loud contrast, low-level DSP feature |
 | Sub-bass ratio | `TXXX:SUB_BASS` | Score 0-1 | Fraction of energy below 120 Hz |
-| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v6` | For tracking re-tag needs |
+| Spectral flux | `TXXX:FLUX` | Score ~0.2-0.5 | How fast the spectrum changes (musical activity) |
+| Vocal presence | `TXXX:VOCAL` | Score 0-1 | Voice/instrumental model, mean voice probability |
+| Intro depth | `TXXX:INTRO_DB` | dB <= 0 | How far the first 20 s sit below the loudest moment |
+| Outro depth | `TXXX:OUTRO_DB` | dB <= 0 | How far the last 20 s sit below the loudest moment |
+| Loudness slope | `TXXX:ARC_SLOPE` | dB per track | Overall loudness trend (positive = gets louder) |
+| Drop height | `TXXX:DROP_DB` | dB >= 0 | Largest breakdown-to-drop rise in the envelope |
+| Peak position | `TXXX:PEAK_POS` | 0-1 | Where the loudest moment sits in the track |
+| Drive index | `TXXX:DRIVE` | Score 0-1 | Builder character: flux + onsets + rising loudness |
+| Emo index | `TXXX:EMO` | Score 0-1 | Closer character: valence + brightness + vocals + fade |
+| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v7` | For tracking re-tag needs |
 | Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Human-readable, visible in Serato/rekordbox |
 | Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
@@ -592,7 +590,7 @@ Log files are overwritten on each `tag` run (not appended).
 {
   "state": "running",
   "mode": "TAGGING",
-  "version": "v6",
+  "version": "v7",
   "total": 3312,
   "to_process": 150,
   "skipped": 3162,
