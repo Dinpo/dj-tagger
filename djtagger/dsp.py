@@ -67,6 +67,64 @@ def dynamic_range(audio, sr, frame_size=2048, hop=1024) -> float:
     return float(np.percentile(db, 90) - np.percentile(db, 10))
 
 
+def spectral_flux(audio, sr, frame_size=1024, hop=512) -> float:
+    """Mean positive spectral flux, normalized by mean frame magnitude.
+
+    Measures how fast the spectrum changes over time (musical activity and
+    drive). Normalizing by the mean total magnitude makes the value
+    amplitude-invariant: numerator and denominator scale together.
+    """
+    mags = _magnitude_spectra(audio, frame_size, hop)
+    if mags.shape[0] < 3:
+        return 0.0
+    denom = float(mags.sum(axis=1)[1:].mean())
+    if denom <= 1e-8:
+        return 0.0
+    flux = np.maximum(0.0, np.diff(mags, axis=0)).sum(axis=1)
+    return float(flux.mean() / denom)
+
+
+def loudness_arc(audio, sr, frame_sec=1.0, hop_sec=0.5, edge_sec=20.0) -> dict:
+    """Shape of the track's loudness envelope over time.
+
+    Returns a dict with:
+      intro_db / outro_db: mean dB below the track's loudest moment over the
+        first / last edge_sec seconds (more negative = quieter edge)
+      slope: linear dB trend across the track (positive = gets louder)
+      drop_db: largest rise from a quiet moment to a loud one within an
+        8 s look-back window (breakdown-to-drop height)
+      peak_pos: position of the loudest frame, 0..1
+    """
+    neutral = {"intro_db": 0.0, "outro_db": 0.0, "slope": 0.0,
+               "drop_db": 0.0, "peak_pos": 0.5}
+    frame = int(frame_sec * sr)
+    hop = int(hop_sec * sr)
+    frames = _frames(audio, frame, hop)
+    if frames.shape[0] < 8:
+        return neutral
+    rms = np.sqrt(np.mean(frames ** 2, axis=1)) + 1e-9
+    rel = 20.0 * np.log10(rms)
+    rel = rel - rel.max()
+
+    fps = 1.0 / hop_sec
+    edge = max(1, int(edge_sec * fps))
+    intro_db = float(np.mean(rel[:edge]))
+    outro_db = float(np.mean(rel[-edge:]))
+
+    x = np.linspace(0.0, 1.0, len(rel))
+    slope = float(np.polyfit(x, rel, 1)[0])
+
+    look = max(1, int(8 * fps))
+    drop_db = 0.0
+    for t in range(look, len(rel)):
+        drop_db = max(drop_db, float(rel[t] - rel[t - look:t].min()))
+
+    peak_pos = float(int(np.argmax(rel)) / max(1, len(rel) - 1))
+    return {"intro_db": round(intro_db, 2), "outro_db": round(outro_db, 2),
+            "slope": round(slope, 2), "drop_db": round(drop_db, 2),
+            "peak_pos": round(peak_pos, 3)}
+
+
 def onset_density(audio, sr, frame_size=1024, hop=512) -> float:
     """Onsets per second via peak-picked spectral flux.
 

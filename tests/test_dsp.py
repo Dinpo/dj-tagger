@@ -50,3 +50,55 @@ def test_onset_density_high_for_click_train():
 
 def test_onset_density_low_for_steady_tone():
     assert dsp.onset_density(_sine(440, seconds=3.0), SR) < 1.0
+
+
+def test_spectral_flux_higher_for_changing_signal():
+    # Click train changes spectrum constantly; steady tone barely changes.
+    sig = np.zeros(3 * SR, dtype=np.float32)
+    for i in range(12):
+        sig[int(i / 4 * SR)] = 1.0
+    assert dsp.spectral_flux(sig, SR) > dsp.spectral_flux(_sine(440, seconds=3.0), SR)
+
+
+def test_spectral_flux_silence_is_zero():
+    assert dsp.spectral_flux(np.zeros(SR, dtype=np.float32), SR) == 0.0
+
+
+def test_spectral_flux_amplitude_invariant():
+    sig = np.zeros(3 * SR, dtype=np.float32)
+    for i in range(12):
+        sig[int(i / 4 * SR)] = 1.0
+    a = dsp.spectral_flux(sig, SR)
+    b = dsp.spectral_flux(0.05 * sig, SR)
+    assert abs(a - b) < 0.05 * max(a, 1e-9)
+
+
+def test_loudness_arc_quiet_intro_and_rising():
+    quiet = _sine(440, seconds=30.0, amp=0.02)
+    loud = _sine(440, seconds=60.0, amp=0.8)
+    arc = dsp.loudness_arc(np.concatenate([quiet, loud]), SR)
+    assert arc["intro_db"] < -10.0     # intro much quieter than the peak
+    assert arc["slope"] > 5.0          # loudness rises over the track
+    assert arc["peak_pos"] > 0.3       # loudest moment is not at the start
+
+
+def test_loudness_arc_flat_tone_is_flat():
+    arc = dsp.loudness_arc(_sine(440, seconds=90.0, amp=0.5), SR)
+    assert abs(arc["intro_db"]) < 2.0
+    assert abs(arc["outro_db"]) < 2.0
+    assert abs(arc["slope"]) < 1.0
+    assert arc["drop_db"] < 3.0
+
+
+def test_loudness_arc_detects_breakdown_drop():
+    body1 = _sine(440, seconds=40.0, amp=0.8)
+    breakdown = _sine(440, seconds=15.0, amp=0.05)
+    body2 = _sine(440, seconds=40.0, amp=0.9)
+    arc = dsp.loudness_arc(np.concatenate([body1, breakdown, body2]), SR)
+    assert arc["drop_db"] > 15.0
+
+
+def test_loudness_arc_short_audio_neutral():
+    arc = dsp.loudness_arc(_sine(440, seconds=1.0), SR)
+    assert arc["slope"] == 0.0
+    assert arc["drop_db"] == 0.0
