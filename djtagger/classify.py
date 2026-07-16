@@ -191,11 +191,18 @@ def decide_role(result: dict, genre: str = "", stats: dict | None = None) -> str
 
 def compute_arc(audio, sr, segment_energies, energy, valence, vocal=0.0) -> dict:
     """Compute DSP features, character indices, and the (global-band) role."""
-    centroid = dsp.spectral_centroid(audio, sr)
-    onset = dsp.onset_density(audio, sr)
-    dyn = dsp.dynamic_range(audio, sr)
+    # Share framing/FFT work between features with the same geometry:
+    # centroid + dynamic_range both frame at 2048/1024, flux + onset both
+    # need the 1024/512 magnitude spectra. Cuts the per-track DSP passes
+    # roughly in half on multi-million-sample audio.
+    frames_2048 = dsp._frames(audio, 2048, 1024)
+    mags_1024 = dsp._magnitude_spectra(audio, 1024, 512)
+
+    centroid = dsp.spectral_centroid(audio, sr, frames=frames_2048)
+    onset = dsp.onset_density(audio, sr, mags=mags_1024)
+    dyn = dsp.dynamic_range(audio, sr, frames=frames_2048)
     subb = dsp.sub_bass_ratio(audio, sr)
-    flux = dsp.spectral_flux(audio, sr)
+    flux = dsp.spectral_flux(audio, sr, mags=mags_1024)
     arc = dsp.loudness_arc(audio, sr)
 
     level = float(np.clip(energy, 0.0, 1.0))

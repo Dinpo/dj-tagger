@@ -233,15 +233,21 @@ def analyze_track(
             electronic_genres.append((label, round(float(prob), 3)))
 
     # ─── Original mood predictions ──────────────────────────
+    # Per-frame predictions are kept: the segment analysis below derives
+    # per-segment scores by slicing them (the heads are frame-wise, so a
+    # slice mean is identical to re-running the model on the segment).
     moods = {}
+    mood_frame_preds: dict[str, np.ndarray] = {}
     for mood_name, model in models["moods"].items():
         preds = model(embeddings)
+        mood_frame_preds[mood_name] = preds
         moods[mood_name] = round(float(np.mean(preds, axis=0)[0]), 3)
 
     # ─── Danceability ───────────────────────────────────────
+    dance_frame_preds = None
     if models.get("danceability") is not None:
-        dance_preds = models["danceability"](embeddings)
-        danceability = round(float(np.mean(dance_preds, axis=0)[0]), 3)
+        dance_frame_preds = models["danceability"](embeddings)
+        danceability = round(float(np.mean(dance_frame_preds, axis=0)[0]), 3)
     else:
         # Fallback: estimate from moods
         danceability = round(float(np.clip(
@@ -337,17 +343,16 @@ def analyze_track(
             end = min(start + SEGMENT_LENGTH_SEC, num_frames)
             if end - start < 10:
                 break
-            seg_emb = embeddings[start:end]
 
-            # Per-segment danceability
-            if models.get("danceability") is not None:
-                seg_dance = float(np.mean(models["danceability"](seg_emb), axis=0)[0])
+            # Per-segment scores from the stored whole-track per-frame
+            # predictions: no model re-runs per segment (saves ~3 model
+            # calls per 15 s of audio, the analysis hot path).
+            if dance_frame_preds is not None:
+                seg_dance = float(np.mean(dance_frame_preds[start:end], axis=0)[0])
             else:
                 seg_dance = danceability
-
-            # Per-segment moods (aggressive + relaxed)
-            seg_agg = float(np.mean(models["moods"]["aggressive"](seg_emb), axis=0)[0])
-            seg_rel = float(np.mean(models["moods"]["relaxed"](seg_emb), axis=0)[0])
+            seg_agg = float(np.mean(mood_frame_preds["aggressive"][start:end], axis=0)[0])
+            seg_rel = float(np.mean(mood_frame_preds["relaxed"][start:end], axis=0)[0])
 
             seg_e = _raw_energy(seg_dance, arousal_norm, seg_agg, seg_rel)
             segment_energies.append(seg_e)

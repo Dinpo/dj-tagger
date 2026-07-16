@@ -102,3 +102,28 @@ def test_loudness_arc_short_audio_neutral():
     arc = dsp.loudness_arc(_sine(440, seconds=1.0), SR)
     assert arc["slope"] == 0.0
     assert arc["drop_db"] == 0.0
+
+
+def test_precomputed_frames_and_mags_match_defaults():
+    # Sharing frames/mags between features must not change any value.
+    sig = np.zeros(3 * SR, dtype=np.float32)
+    for i in range(12):
+        sig[int(i / 4 * SR)] = 1.0
+    sig += _sine(300, seconds=3.0, amp=0.1)
+
+    m = dsp._magnitude_spectra(sig, 1024, 512)
+    assert dsp.spectral_flux(sig, SR) == dsp.spectral_flux(sig, SR, mags=m)
+    assert dsp.onset_density(sig, SR) == dsp.onset_density(sig, SR, mags=m)
+
+    f = dsp._frames(sig, 2048, 1024)
+    assert dsp.spectral_centroid(sig, SR) == dsp.spectral_centroid(sig, SR, frames=f)
+    assert dsp.dynamic_range(sig, SR) == dsp.dynamic_range(sig, SR, frames=f)
+
+
+def test_loudness_arc_short_track_edges_do_not_overlap():
+    # 30 s track: fixed 20 s edges would overlap; the adaptive cap keeps
+    # intro and outro windows distinct so a genuine ramp still registers.
+    quiet = _sine(440, seconds=15.0, amp=0.02)
+    loud = _sine(440, seconds=15.0, amp=0.8)
+    arc = dsp.loudness_arc(np.concatenate([quiet, loud]), SR)
+    assert arc["intro_db"] < arc["outro_db"] - 10.0

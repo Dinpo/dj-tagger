@@ -8,30 +8,43 @@ import numpy as np
 
 
 def _frames(audio: np.ndarray, frame_size: int, hop: int) -> np.ndarray:
-    """Slice audio into overlapping frames (frames x frame_size)."""
+    """Slice audio into overlapping frames (frames x frame_size).
+
+    Returns a zero-copy strided view (read-only); callers that need to
+    mutate must copy. Avoids materializing a frames x frame_size copy of
+    the whole track (tens of MB per call on a full-length track).
+    """
     if len(audio) < frame_size:
         if len(audio) == 0:
             return np.empty((0, frame_size), dtype=np.float32)
         pad = np.zeros(frame_size, dtype=np.float32)
         pad[: len(audio)] = audio
         return pad[None, :]
-    n = 1 + (len(audio) - frame_size) // hop
-    idx = np.arange(frame_size)[None, :] + hop * np.arange(n)[:, None]
-    return audio[idx]
+    view = np.lib.stride_tricks.sliding_window_view(audio, frame_size)
+    return view[::hop]
 
 
-def _magnitude_spectra(audio: np.ndarray, frame_size: int, hop: int) -> np.ndarray:
-    """Windowed rFFT magnitude per frame (frames x bins)."""
-    frames = _frames(audio, frame_size, hop)
+def _magnitude_spectra(audio: np.ndarray, frame_size: int, hop: int,
+                       frames: np.ndarray | None = None) -> np.ndarray:
+    """Windowed rFFT magnitude per frame (frames x bins).
+
+    `frames` may be a precomputed _frames(audio, frame_size, hop) result to
+    share the framing work between features that use the same geometry.
+    """
+    if frames is None:
+        frames = _frames(audio, frame_size, hop)
     if frames.shape[0] == 0:
         return np.empty((0, frame_size // 2 + 1))
     window = np.hanning(frame_size).astype(np.float32)
     return np.abs(np.fft.rfft(frames * window, axis=1))
 
 
-def spectral_centroid(audio, sr, frame_size=2048, hop=1024) -> float:
-    """Magnitude-weighted mean frequency (Hz), averaged over frames."""
-    mags = _magnitude_spectra(audio, frame_size, hop)
+def spectral_centroid(audio, sr, frame_size=2048, hop=1024, frames=None) -> float:
+    """Magnitude-weighted mean frequency (Hz), averaged over frames.
+
+    `frames` may be a precomputed _frames(audio, frame_size, hop) result.
+    """
+    mags = _magnitude_spectra(audio, frame_size, hop, frames=frames)
     if mags.shape[0] == 0:
         return 0.0
     freqs = np.fft.rfftfreq(frame_size, 1.0 / sr)
@@ -57,9 +70,13 @@ def sub_bass_ratio(audio, sr, cutoff=120.0) -> float:
     return float(energy[freqs < cutoff].sum() / total)
 
 
-def dynamic_range(audio, sr, frame_size=2048, hop=1024) -> float:
-    """Spread of frame loudness in dB: p90 minus p10 of per-frame RMS."""
-    frames = _frames(audio, frame_size, hop)
+def dynamic_range(audio, sr, frame_size=2048, hop=1024, frames=None) -> float:
+    """Spread of frame loudness in dB: p90 minus p10 of per-frame RMS.
+
+    `frames` may be a precomputed _frames(audio, frame_size, hop) result.
+    """
+    if frames is None:
+        frames = _frames(audio, frame_size, hop)
     if frames.shape[0] == 0:
         return 0.0
     rms = np.sqrt(np.mean(frames ** 2, axis=1))
@@ -67,14 +84,17 @@ def dynamic_range(audio, sr, frame_size=2048, hop=1024) -> float:
     return float(np.percentile(db, 90) - np.percentile(db, 10))
 
 
-def spectral_flux(audio, sr, frame_size=1024, hop=512) -> float:
+def spectral_flux(audio, sr, frame_size=1024, hop=512, mags=None) -> float:
     """Mean positive spectral flux, normalized by mean frame magnitude.
 
     Measures how fast the spectrum changes over time (musical activity and
     drive). Normalizing by the mean total magnitude makes the value
     amplitude-invariant: numerator and denominator scale together.
+    `mags` may be a precomputed _magnitude_spectra(audio, frame_size, hop)
+    result, shared with onset_density which uses the same geometry.
     """
-    mags = _magnitude_spectra(audio, frame_size, hop)
+    if mags is None:
+        mags = _magnitude_spectra(audio, frame_size, hop)
     if mags.shape[0] < 3:
         return 0.0
     denom = float(mags.sum(axis=1)[1:].mean())
@@ -107,7 +127,10 @@ def loudness_arc(audio, sr, frame_sec=1.0, hop_sec=0.5, edge_sec=20.0) -> dict:
     rel = rel - rel.max()
 
     fps = 1.0 / hop_sec
-    edge = max(1, int(edge_sec * fps))
+    # Cap the edge window at a quarter of the track so intro and outro
+    # never overlap on short tracks (a 30 s edit would otherwise measure
+    # nearly the same frames for both and mute the fade signal).
+    edge = max(1, min(int(edge_sec * fps), len(rel) // 4))
     intro_db = float(np.mean(rel[:edge]))
     outro_db = float(np.mean(rel[-edge:]))
 
@@ -115,9 +138,12 @@ def loudness_arc(audio, sr, frame_sec=1.0, hop_sec=0.5, edge_sec=20.0) -> dict:
     slope = float(np.polyfit(x, rel, 1)[0])
 
     look = max(1, int(8 * fps))
-    drop_db = 0.0
-    for t in range(look, len(rel)):
-        drop_db = max(drop_db, float(rel[t] - rel[t - look:t].min()))
+    if len(rel) > look:
+        # mins[i] = rel[i:i+look].min(); drop at t uses the window ending at t.
+        mins = np.lib.stride_tricks.sliding_window_view(rel, look).min(axis=1)
+        drop_db = float(max(0.0, (rel[look:] - mins[: len(rel) - look]).max()))
+    else:
+        drop_db = 0.0
 
     peak_pos = float(int(np.argmax(rel)) / max(1, len(rel) - 1))
     return {"intro_db": round(intro_db, 2), "outro_db": round(outro_db, 2),
@@ -125,8 +151,11 @@ def loudness_arc(audio, sr, frame_sec=1.0, hop_sec=0.5, edge_sec=20.0) -> dict:
             "peak_pos": round(peak_pos, 3)}
 
 
-def onset_density(audio, sr, frame_size=1024, hop=512) -> float:
+def onset_density(audio, sr, frame_size=1024, hop=512, mags=None) -> float:
     """Onsets per second via peak-picked spectral flux.
+
+    `mags` may be a precomputed _magnitude_spectra(audio, frame_size, hop)
+    result, shared with spectral_flux which uses the same geometry.
 
     Flux is normalised by the mean total magnitude per frame (an
     absolute, signal-scaled reference) rather than by its own max.
@@ -140,7 +169,8 @@ def onset_density(audio, sr, frame_size=1024, hop=512) -> float:
     transients while still catching genuine onsets, whose relative
     flux is orders of magnitude larger.
     """
-    mags = _magnitude_spectra(audio, frame_size, hop)
+    if mags is None:
+        mags = _magnitude_spectra(audio, frame_size, hop)
     if mags.shape[0] < 3:
         return 0.0
     mag_sum = mags.sum(axis=1)
