@@ -183,8 +183,8 @@ SEGMENT_HOP_SEC = 15      # hop between segments
 FEATURE_RANGE = {
     "spectral_centroid": (1422.0, 2342.0),   # Hz on 16 kHz audio (p10..p90)
     "onset_rate":        (2.49, 3.90),        # onsets per second (p10..p90)
-    "dynamic_range":     (9.2, 18.9),         # dB; metric is p90-p10 of frame RMS. Range below is that metric's p10..p90 across library
-    "sub_bass":          (0.51, 0.81),        # fraction of energy below 120 Hz (p10..p90)
+    # Note: dynamic_range and sub_bass are computed and written as raw tags
+    # but do not feed the v7 role decision, so they have no range here.
     "flux":              (0.29, 0.38),        # mean normalized spectral flux
     "vocal":             (0.07, 0.73),        # voice_instrumental model, mean voice prob
     "outro_fade":        (3.3, 27.3),         # dB the outro sits below the peak (-outro_db)

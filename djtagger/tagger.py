@@ -29,6 +29,18 @@ def is_already_tagged(filepath: str) -> bool:
     return False
 
 
+def tagged_version(filepath: str) -> str:
+    """Return the file's TAGGER_VERSION tag value, or "" if absent/unreadable."""
+    try:
+        tags = ID3(filepath)
+    except Exception:
+        return ""
+    for frame in tags.getall("TXXX"):
+        if frame.desc == "TAGGER_VERSION" and frame.text:
+            return str(frame.text[0]).strip()
+    return ""
+
+
 def parse_filename(filepath: str) -> tuple[str, str, str]:
     """Parse artist, clean-artist, and title from filename.
 

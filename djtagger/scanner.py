@@ -38,6 +38,26 @@ def filter_untagged(mp3s: list[str]) -> tuple[list[str], int]:
     return to_process, skipped
 
 
+def filter_outdated(mp3s: list[str]) -> tuple[list[str], int]:
+    """Split into files tagged by an older version (or untagged) and a skip count.
+
+    Used by `tag --upgrade` to backfill fields added by newer tagger versions
+    without re-processing files that are already current.
+    Returns (files_to_process, skipped_count).
+    """
+    from .config import TAGGER_VERSION
+    from .tagger import tagged_version
+
+    to_process: list[str] = []
+    skipped = 0
+    for f in mp3s:
+        if tagged_version(f) == TAGGER_VERSION:
+            skipped += 1
+        else:
+            to_process.append(f)
+    return to_process, skipped
+
+
 def filter_by_source(mp3s: list[str], source: str) -> tuple[list[str], int]:
     """Keep only MP3s whose existing TXXX:GENRE_SOURCE matches *source*.
 

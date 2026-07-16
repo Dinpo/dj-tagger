@@ -164,6 +164,7 @@ djtagger tag /path/to/music --fix-comments
 | `--no-beatport` | Skip Beatport scraping; use Last.fm + ML only |
 | `--detect-bpm-key` | Also detect BPM and key (off by default — DJ software usually owns these) |
 | `--fix-comments` | Regenerate `COMM` tags from existing energy/valence values (no ML re-analysis) |
+| `--upgrade` | Re-analyze files tagged by an older tagger version; keeps their resolved genres (no network lookups needed) |
 
 If no path is given, it defaults to the current directory (or `DJTAGGER_MUSIC_PATH`).
 

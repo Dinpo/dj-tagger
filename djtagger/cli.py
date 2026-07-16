@@ -219,6 +219,13 @@ def tag(
              "(e.g. 'ml' to refresh ML-only tracks after Beatport was unreachable). "
              "Implies --force for matching files; everything else is skipped.",
     ),
+    upgrade: bool = typer.Option(
+        False, "--upgrade",
+        help="Re-analyze files tagged by an older tagger version (and untagged "
+             "files). Keeps their already-resolved genres, so no network "
+             "lookups are needed for them. Files already at the current "
+             "version are skipped.",
+    ),
 ) -> None:
     """Tag MP3 files with genre, energy, and mood metadata."""
     global _log_fh, _err_fh
@@ -237,7 +244,7 @@ def tag(
     try:
         _tag_inner(
             path, dry_run, force, no_beatport,
-            fix_comments, detect_bpm_key, retag_source,
+            fix_comments, detect_bpm_key, retag_source, upgrade,
         )
     finally:
         _cleanup()
@@ -251,14 +258,15 @@ def _tag_inner(
     fix_comments: bool,
     detect_bpm_key: bool,
     retag_source: str = "",
+    upgrade: bool = False,
 ) -> None:
     """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
     from .analyzer import analyze_track, load_models
     from .genres import resolve_metadata
-    from .scanner import filter_by_source, filter_untagged, find_mp3s
+    from .scanner import filter_by_source, filter_outdated, filter_untagged, find_mp3s
     from .tagger import fix_comments as do_fix_comments
-    from .tagger import parse_filename, write_tags
+    from .tagger import parse_filename, read_tags, write_tags
     from rich.console import Group
 
     # ─── Fix-comments mode ──────────────────────────────────
@@ -316,6 +324,12 @@ def _tag_inner(
             f"[yellow]Retag-source[/yellow] '{retag_source}': "
             f"[bold]{len(mp3s)}[/bold] matching, "
             f"[dim]{skipped}[/dim] skipped"
+        )
+    elif upgrade:
+        mp3s, skipped = filter_outdated(all_mp3s)
+        console.print(
+            f"[yellow]Upgrade[/yellow]: [bold]{len(mp3s)}[/bold] tracks below "
+            f"{TAGGER_VERSION}, [dim]{skipped}[/dim] already current"
         )
     elif not force:
         mp3s, skipped = filter_untagged(all_mp3s)
@@ -422,8 +436,20 @@ def _tag_inner(
                 progress.update(task_id, completed=i)
                 continue
 
-            # Resolve genre + album/year
-            try:
+            # Resolve genre + album/year. In upgrade mode, files whose
+            # genre was already resolved keep it: no network lookups, no
+            # genre churn, just refreshed analysis tags (the set role is
+            # still decided genre-aware inside write_tags from the kept
+            # TCON genre).
+            existing_info = read_tags(mp3) if upgrade else None
+            if (existing_info is not None
+                    and existing_info.get("genre")
+                    and existing_info.get("genre_source")):
+                final_genres = []
+                genre_source = existing_info["genre_source"]
+                album, year = "", ""
+            else:
+              try:
                 meta = resolve_metadata(
                     artist,
                     artist_clean,
@@ -437,7 +463,7 @@ def _tag_inner(
                 genre_source = meta["source"]
                 album = meta.get("album", "")
                 year = meta.get("year", "")
-            except Exception as ex:
+              except Exception as ex:
                 _log(f"  ⚠ Genre resolution failed: {ex}")
                 final_genres, genre_source, album, year = [], "ml", "", ""
 
@@ -1523,7 +1549,7 @@ def health(
     if v4_tracks:
         issues.append(
             f"[yellow]⚠[/yellow]  [bold]{len(v4_tracks)}[/bold] tracks tagged with older version "
-            f"(re-tag with --force for improved v5 accuracy)"
+            f"(re-tag with --upgrade to refresh them to {TAGGER_VERSION})"
         )
 
     # Print issues first, then good
