@@ -379,7 +379,16 @@ def analyze_track(
         arc = classify.compute_arc(
             audio, 16000, segment_energies, energy, valence_norm, vocal,
         )
-    except Exception:
+        arc["arc_ok"] = True
+    except Exception as ex:
+        # Do NOT fabricate a role from neutral values: an empty role is
+        # honest (comment omits it, callers can detect it via arc_ok), and
+        # the failure is surfaced instead of silently mislabeling the track.
+        print(
+            f"[djtagger] Warning: arc analysis failed for "
+            f"{os.path.basename(filepath)}: {ex}",
+            file=sys.stderr,
+        )
         arc = {
             "spectral_centroid": 0.0, "onset_rate": 0.0, "dynamic_range": 0.0,
             "sub_bass": 0.0, "flux": 0.0, "vocal": vocal,
@@ -387,7 +396,8 @@ def analyze_track(
             "drop_db": 0.0, "peak_pos": 0.5,
             "arc_level": energy, "arc_momentum": 0.0,
             "drive": 0.0, "emo": 0.0,
-            "set_role": classify.ROLE_OPENER,
+            "set_role": "",
+            "arc_ok": False,
         }
 
     return {
@@ -418,6 +428,7 @@ def analyze_track(
         "drive": arc["drive"],
         "emo": arc["emo"],
         "set_role": arc["set_role"],
+        "arc_ok": arc["arc_ok"],
         "bpm": bpm,
         "key": key_str,
         "key_strength": key_strength,

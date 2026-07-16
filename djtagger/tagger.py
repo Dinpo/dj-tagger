@@ -7,6 +7,7 @@ from mutagen.id3 import ID3, TXXX, TCON, TBPM, TKEY, COMM, TALB, TDRC, ID3NoHead
 
 from .config import (
     GENERIC_GENRES,
+    LEGACY_ROLES,
     TAGGER_VERSION,
     is_junk_album,
     is_junk_genre,
@@ -155,6 +156,9 @@ def read_tags(filepath: str) -> dict:
     for frame in tags.getall("TXXX"):
         if frame.desc in tag_map:
             info[tag_map[frame.desc]] = frame.text[0] if frame.text else ""
+
+    # Normalize role names written by older tagger versions (v6 "Warm-up").
+    info["set_role"] = LEGACY_ROLES.get(info["set_role"], info["set_role"])
 
     # Comments
     comm = tags.get("COMM::eng")
@@ -339,7 +343,23 @@ def write_tags(
                 tags.delall("TCON")
                 tags.add(TCON(encoding=3, text=[new_genre]))
         else:
+            new_genre = existing_genre
             genre_action = "no genre"
+
+        # Set role: decided HERE, once, for every write path (tag, fix-audit,
+        # future callers), using the genre that actually ends up on the file
+        # after the merge above. compute_arc's role is only a global-band
+        # provisional; this applies genre-relative bands when stats exist.
+        # Skipped when arc analysis failed (arc_ok False): an empty role is
+        # written rather than one fabricated from neutral values.
+        if result.get("arc_ok", True) and result.get("set_role", "") != "":
+            from . import classify
+            try:
+                result["set_role"] = classify.decide_role(result, new_genre)
+            except Exception:
+                # Stats lookup failed for this track; the analyzer's
+                # global-band role is still a valid decision, keep it.
+                pass
 
         # TXXX custom tags (only our namespaced keys)
         for key, val in [
@@ -478,7 +498,13 @@ def fix_comments(filepath: str) -> str:
         intro = float(intro_tag.text[0]) if intro_tag and intro_tag.text else 0.0
 
         role_tag = tags.get("TXXX:SET_ROLE")
-        role = role_tag.text[0] if role_tag and role_tag.text else ""
+        stored_role = role_tag.text[0] if role_tag and role_tag.text else ""
+        # Translate role names from older versions (v6 "Warm-up" -> "Opener")
+        # and persist the rename so the frame matches the current vocabulary.
+        role = LEGACY_ROLES.get(stored_role, stored_role)
+        if role != stored_role:
+            tags.delall("TXXX:SET_ROLE")
+            tags.add(TXXX(encoding=3, desc="SET_ROLE", text=[role]))
         lvl_tag = tags.get("TXXX:ARC_LEVEL")
         lvl = float(lvl_tag.text[0]) if lvl_tag and lvl_tag.text else 0.0
         mom_tag = tags.get("TXXX:ARC_MOMENTUM")

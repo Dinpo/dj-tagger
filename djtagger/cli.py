@@ -441,16 +441,8 @@ def _tag_inner(
                 _log(f"  ⚠ Genre resolution failed: {ex}")
                 final_genres, genre_source, album, year = [], "ml", "", ""
 
-            # Genre-aware role: once the genre is known, re-decide the role
-            # using within-genre energy bands when a stats table exists
-            # (djtagger genre-stats). Falls back to the global-band role.
-            try:
-                from . import classify
-                role_genre = final_genres[0] if final_genres else ""
-                result["set_role"] = classify.decide_role(result, role_genre)
-            except Exception:
-                pass
-
+            # Set role is decided inside write_tags (single decision point,
+            # genre-aware, from the genre actually written to the file).
             src_icon = SOURCE_ICONS.get(genre_source, "")
             src_color = SOURCE_COLORS.get(genre_source, "white")
             genre_str = "; ".join(final_genres[:4]) if final_genres else "(none)"

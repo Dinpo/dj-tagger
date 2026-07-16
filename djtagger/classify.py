@@ -103,28 +103,39 @@ def classify_role(arc_level, drive, emo, thresholds=None, genre_pctl=None) -> st
 # ─── Genre-relative energy bands ────────────────────────────
 
 _genre_stats_cache: dict | None = None
-_genre_stats_loaded = False
+_genre_stats_mtime: float | None = None
 
 
 def load_genre_stats(path: str | None = None) -> dict | None:
     """Load the per-genre energy quantile table, or None if absent/invalid.
 
-    The table is produced by `djtagger genre-stats` and cached per process.
+    The table is produced by `djtagger genre-stats`. The default-path load
+    is cached by file mtime, so a table (re)written mid-run, even by another
+    process, is picked up on the next call instead of being latched forever.
     """
-    global _genre_stats_cache, _genre_stats_loaded
-    if path is None and _genre_stats_loaded:
-        return _genre_stats_cache
+    global _genre_stats_cache, _genre_stats_mtime
     p = path or GENRE_STATS_FILE
+    try:
+        mtime = os.stat(p).st_mtime
+    except OSError:
+        if path is None:
+            _genre_stats_cache, _genre_stats_mtime = None, None
+        return None
+    if path is None and mtime == _genre_stats_mtime and _genre_stats_cache is not None:
+        return _genre_stats_cache
     stats = None
     try:
-        if os.path.isfile(p):
-            with open(p) as f:
-                stats = json.load(f)
-    except Exception:
+        with open(p) as f:
+            stats = json.load(f)
+    except Exception as ex:
+        # A present-but-unreadable table is a real problem worth surfacing:
+        # silently falling back to global bands hid this failure for weeks.
+        import sys
+        print(f"[djtagger] Warning: cannot read genre stats {p}: {ex}. "
+              f"Falling back to global energy bands.", file=sys.stderr)
         stats = None
     if path is None:
-        _genre_stats_cache = stats
-        _genre_stats_loaded = True
+        _genre_stats_cache, _genre_stats_mtime = stats, mtime
     return stats
 
 
@@ -151,12 +162,16 @@ def genre_energy_percentile(energy, genre, stats, min_n=None) -> float | None:
     q = entry.get("q")
     if not q or len(q) < 2:
         return None
-    if energy <= q[0]:
-        return 0.0
-    if energy >= q[-1]:
-        return 1.0
-    # q is a quantile grid p0..p100; interpolate energy's position in it.
-    pos = float(np.interp(energy, q, np.linspace(0.0, 1.0, len(q))))
+    try:
+        if energy <= q[0]:
+            return 0.0
+        if energy >= q[-1]:
+            return 1.0
+        # q is a quantile grid p0..p100; interpolate energy's position in it.
+        pos = float(np.interp(energy, q, np.linspace(0.0, 1.0, len(q))))
+    except (TypeError, ValueError):
+        # Malformed entry (non-numeric quantiles etc.): fall back to global bands.
+        return None
     return round(pos, 3)
 
 

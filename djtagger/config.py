@@ -220,3 +220,8 @@ ROLE_OPENER = "Opener"
 ROLE_BUILDER = "Builder"
 ROLE_PEAK = "Peak"
 ROLE_CLOSER = "Closer"
+
+# Role names written by older tagger versions, mapped to their current
+# equivalents. Applied when reading tags and when fixing comments, so
+# files tagged by v6 display the v7 vocabulary without a full re-analysis.
+LEGACY_ROLES = {"Warm-up": ROLE_OPENER}

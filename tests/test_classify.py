@@ -121,3 +121,33 @@ def test_compute_arc_returns_all_keys_and_valid_role():
     assert -1.0 <= out["arc_momentum"] <= 1.0
     assert 0.0 <= out["drive"] <= 1.0
     assert 0.0 <= out["emo"] <= 1.0
+
+
+def test_load_genre_stats_mtime_invalidation(tmp_path, monkeypatch):
+    import json
+    import os
+
+    stats_file = tmp_path / "genre_energy.json"
+    monkeypatch.setattr(classify, "GENRE_STATS_FILE", str(stats_file))
+    # reset the module cache
+    classify._genre_stats_cache = None
+    classify._genre_stats_mtime = None
+
+    # No file yet -> None, and NOT latched forever
+    assert classify.load_genre_stats() is None
+
+    stats_file.write_text(json.dumps({"house": {"n": 50, "q": [0.1, 0.9]}}))
+    loaded = classify.load_genre_stats()
+    assert loaded is not None and "house" in loaded
+
+    # Rewrite with new content and a newer mtime -> picked up
+    stats_file.write_text(json.dumps({"techno": {"n": 40, "q": [0.2, 1.0]}}))
+    st = stats_file.stat()
+    os.utime(stats_file, (st.st_atime, st.st_mtime + 5))
+    reloaded = classify.load_genre_stats()
+    assert reloaded is not None and "techno" in reloaded and "house" not in reloaded
+
+
+def test_genre_energy_percentile_malformed_entry():
+    bad = {"tech house": {"n": 100, "q": ["not", "numbers"]}}
+    assert classify.genre_energy_percentile(0.7, "tech house", bad, min_n=30) is None
