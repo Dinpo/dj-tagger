@@ -1244,6 +1244,80 @@ def genre_stats(
 
 
 # ═════════════════════════════════════════════════════════════
+#  REROLE command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def rerole(
+    path: str = typer.Argument(
+        DEFAULT_MUSIC_PATH,
+        help="Library folder (reads tags, no audio analysis)",
+    ),
+) -> None:
+    """Re-decide set roles from already-stored tags (no audio, no ML).
+
+    Applies the current ROLE_THRESHOLDS and genre-relative bands to every
+    v7-analyzed track, rewriting SET_ROLE and the comment where the role
+    changes. Fast: use it to iterate on role tuning without re-running the
+    analysis pipeline. Run `djtagger genre-stats` first for genre-relative
+    banding.
+    """
+    from collections import Counter
+    from .scanner import find_mp3s
+    from .tagger import rerole_file
+
+    mp3s = find_mp3s(path)
+    console.print(f"\n[bold cyan]🎚  Re-deciding roles[/bold cyan] on "
+                  f"[bold]{len(mp3s)}[/bold] files\n")
+    changed = skipped = errors = unchanged = 0
+    roles: Counter = Counter()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Re-roling", total=len(mp3s))
+        for mp3 in mp3s:
+            status, role = rerole_file(mp3)
+            if status == "reroled":
+                changed += 1
+                roles[role] += 1
+            elif status == "unchanged":
+                unchanged += 1
+                roles[role] += 1
+            elif status == "error":
+                errors += 1
+            else:
+                skipped += 1
+            progress.advance(task)
+
+    error_suffix = (
+        f", [bold red]{errors}[/bold red] errors" if errors else ""
+    )
+    console.print(
+        f"\n[bold green]✅ Done![/bold green] "
+        f"[bold]{changed}[/bold] roles changed, "
+        f"[dim]{unchanged}[/dim] unchanged, "
+        f"[dim]{skipped}[/dim] skipped (not v7-analyzed)" + error_suffix
+    )
+
+    total = sum(roles.values())
+    if total:
+        table = Table(box=box.SIMPLE_HEAVY, border_style="dim", padding=(0, 1))
+        table.add_column("Role", style="cyan")
+        table.add_column("Count", justify="right")
+        table.add_column("%", justify="right")
+        for r in ("Opener", "Builder", "Peak", "Closer"):
+            c = roles.get(r, 0)
+            table.add_row(r, str(c), f"{100 * c / total:.1f}%")
+        console.print(table)
+
+
+# ═════════════════════════════════════════════════════════════
 #  SUGGEST command
 # ═════════════════════════════════════════════════════════════
 

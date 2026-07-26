@@ -473,6 +473,83 @@ def write_tags(
         return False, f"error: {ex}"
 
 
+def _txxx_float(tags, desc, default=None):
+    """Read a TXXX float value, returning default if absent/blank/non-numeric."""
+    fr = tags.get(f"TXXX:{desc}")
+    if fr and fr.text and str(fr.text[0]).strip() != "":
+        try:
+            return float(fr.text[0])
+        except ValueError:
+            return default
+    return default
+
+
+def rerole_file(filepath: str) -> tuple[str, str]:
+    """Re-decide SET_ROLE from already-stored tags, no audio or ML.
+
+    Applies the current thresholds and genre-relative bands to a track that
+    was already analyzed by v7 (has ARC_LEVEL / DRIVE / EMO), rewriting the
+    SET_ROLE frame and the comment only when the role actually changes. Lets
+    role tuning iterate in seconds without re-running the analysis pipeline.
+
+    Returns (status, new_role): status is "reroled" (role changed and was
+    written), "unchanged", "skipped" (not a v7-analyzed file), or "error".
+    """
+    try:
+        tags = ID3(filepath)
+    except Exception:
+        return "skipped", ""
+
+    lvl = _txxx_float(tags, "ARC_LEVEL")
+    drive = _txxx_float(tags, "DRIVE")
+    emo = _txxx_float(tags, "EMO")
+    if lvl is None or drive is None or emo is None:
+        return "skipped", ""  # not analyzed by v7, nothing to re-decide from
+
+    genre = ""
+    tcon = tags.getall("TCON")
+    if tcon and tcon[0].text:
+        genre = str(tcon[0].text[0]).strip()
+
+    from . import classify
+    try:
+        new_role = classify.decide_role(
+            {"arc_level": lvl, "drive": drive, "emo": emo}, genre
+        )
+    except Exception:
+        return "error", ""
+
+    role_fr = tags.get("TXXX:SET_ROLE")
+    stored = str(role_fr.text[0]).strip() if role_fr and role_fr.text else ""
+    old_role = LEGACY_ROLES.get(stored, stored)
+    if new_role == old_role:
+        return "unchanged", new_role  # no write, keep it cheap
+
+    try:
+        tags.delall("TXXX:SET_ROLE")
+        tags.add(TXXX(encoding=3, desc="SET_ROLE", text=[new_role]))
+        comment, detail = _build_comment(
+            energy=_txxx_float(tags, "ENERGY", 0.0),
+            valence=_txxx_float(tags, "VALENCE", 0.0),
+            set_role=new_role,
+            danceability=_txxx_float(tags, "DANCEABILITY", 0.0),
+            peak_energy=_txxx_float(tags, "PEAK_ENERGY", 0.0),
+            arousal=_txxx_float(tags, "AROUSAL", 0.0),
+            aggressive=_txxx_float(tags, "MOOD_AGGRESSIVE", 0.0),
+            intro_energy=_txxx_float(tags, "INTRO_ENERGY", 0.0),
+            arc_level=lvl,
+            arc_momentum=_txxx_float(tags, "ARC_MOMENTUM", 0.0),
+        )
+        tags.delall("COMM::eng")
+        tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
+        tags.delall("COMM:djtagger:eng")
+        tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
+        tags.save(filepath)
+        return "reroled", new_role
+    except Exception:
+        return "error", ""
+
+
 def fix_comments(filepath: str) -> str:
     """Re-write comments from existing TXXX energy/valence/danceability tags.
 

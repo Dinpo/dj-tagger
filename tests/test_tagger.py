@@ -101,3 +101,41 @@ def test_write_tags_arc_failure_writes_empty_role(tmp_path):
     info = tagger.read_tags(p)
     assert info["set_role"] == ""
     assert "Role:" not in info["comment"]
+
+
+def test_rerole_changes_role_from_stored_tags(tmp_path):
+    # Stored as Opener but arc_level 0.9 with unknown genre -> global bands -> Peak.
+    p = str(tmp_path / "rr.mp3")
+    tags = ID3()
+    for desc, val in [("TAGGER_VERSION", "v7"), ("SET_ROLE", "Opener"),
+                      ("ARC_LEVEL", "0.9"), ("DRIVE", "0.5"), ("EMO", "0.5"),
+                      ("ENERGY", "0.9"), ("VALENCE", "0.6")]:
+        tags.add(TXXX(encoding=3, desc=desc, text=[val]))
+    tags.save(p)
+
+    status, role = tagger.rerole_file(p)
+    assert status == "reroled"
+    assert role == "Peak"
+    reread = tagger.read_tags(p)
+    assert reread["set_role"] == "Peak"
+    assert reread["comment"].startswith("Role: Peak | ")
+
+
+def test_rerole_skips_non_v7_file(tmp_path):
+    p = str(tmp_path / "old.mp3")
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc="TAGGER_VERSION", text=["v5"]))
+    tags.add(TXXX(encoding=3, desc="ENERGY", text=["0.7"]))
+    tags.save(p)
+    assert tagger.rerole_file(p)[0] == "skipped"
+
+
+def test_rerole_unchanged_when_role_stable(tmp_path):
+    p = str(tmp_path / "stable.mp3")
+    tags = ID3()
+    for desc, val in [("SET_ROLE", "Peak"), ("ARC_LEVEL", "0.95"),
+                      ("DRIVE", "0.5"), ("EMO", "0.5"), ("ENERGY", "0.95"),
+                      ("VALENCE", "0.6")]:
+        tags.add(TXXX(encoding=3, desc=desc, text=[val]))
+    tags.save(p)
+    assert tagger.rerole_file(p) == ("unchanged", "Peak")
