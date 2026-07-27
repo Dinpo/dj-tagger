@@ -19,6 +19,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
   - [Library statistics](#library-statistics)
   - [Search and filter](#search-and-filter)
   - [Export library data](#export-library-data)
+  - [Set-role tuning (genre-stats and rerole)](#set-role-tuning-genre-stats-and-rerole)
   - [Suggest tracks for sets](#suggest-tracks-for-sets)
   - [Collection health check](#collection-health-check)
 - [Filename Convention](#filename-convention)
@@ -106,9 +107,12 @@ done
 # Danceability + Arousal/Valence
 curl -LO https://essentia.upf.edu/models/classification-heads/danceability/danceability-discogs-effnet-1.pb
 curl -LO https://essentia.upf.edu/models/classification-heads/emomusic/emomusic-msd-musicnn-2.pb
+
+# Voice/instrumental (v7 set-role: vocal presence)
+curl -LO https://essentia.upf.edu/models/classification-heads/voice_instrumental/voice_instrumental-discogs-effnet-1.pb
 ```
 
-You should end up with 11 `.pb` files:
+You should end up with 12 `.pb` files:
 
 ```
 ~/.local/essentia-models/
@@ -121,10 +125,11 @@ You should end up with 11 `.pb` files:
 ├── mood_aggressive-discogs-effnet-1.pb
 ├── mood_relaxed-discogs-effnet-1.pb
 ├── danceability-discogs-effnet-1.pb
+├── voice_instrumental-discogs-effnet-1.pb   # v7 vocal presence
 └── emomusic-msd-musicnn-2.pb         # Arousal/Valence regression
 ```
 
-If any new model files are missing, DJ Tagger will still work — it falls back to v4-style heuristics for the affected features and logs a warning.
+If any model files are missing, DJ Tagger still works: it falls back to heuristics for the affected features and logs a warning. Without `voice_instrumental`, the set-role vocal signal is treated as 0.
 
 ### Last.fm API Key (Optional)
 
@@ -155,6 +160,9 @@ djtagger tag /path/to/music --no-beatport
 
 # Fix comments on already-tagged files (no re-analysis)
 djtagger tag /path/to/music --fix-comments
+
+# Upgrade older-version tracks to the current tagger (keeps their genres)
+djtagger tag /path/to/music --upgrade
 ```
 
 | Flag | Description |
@@ -286,6 +294,29 @@ djtagger export /music --format json | jq '.[] | select(.energy > 0.8)'
 Exported fields: `path`, `artist`, `title`, `folder`, `genre`, `genre_source`, `genre_detected`, `energy`, `valence`, `mood_happy`, `mood_sad`, `mood_aggressive`, `mood_relaxed`, `tagger_version`, `comment`, `tagged`.
 
 Progress output goes to stderr so stdout stays clean for piping.
+
+### Set-role tuning (genre-stats and rerole)
+
+The set role (Opener / Builder / Peak / Closer) is decided from measured
+features, but you can tune *how* those features map to roles without
+re-analyzing any audio. Two commands support the loop:
+
+```bash
+# Build the per-genre energy table for genre-relative role bands.
+# Reads existing ENERGY tags, writes genre_energy.json next to the models.
+# Run once, and again after large library changes.
+djtagger genre-stats /path/to/music
+
+# Re-decide every track's role from its already-stored tags (no audio, no
+# ML). Applies the current ROLE_THRESHOLDS / FEATURE_RANGE and the
+# genre-relative bands, rewriting SET_ROLE and the comment in seconds.
+djtagger rerole /path/to/music
+```
+
+Tuning workflow: listen and note wrong roles → edit `ROLE_THRESHOLDS` /
+`FEATURE_RANGE` in `djtagger/config.py` → `djtagger rerole` → re-check.
+The expensive ML analysis runs only once (via `tag`); role tuning after
+that is a seconds-long `rerole`. See [Set Role](#set-role) for the model.
 
 ### Suggest tracks for sets
 
@@ -619,13 +650,15 @@ When processing completes, `state` changes to `"done"` and `finished` and `elaps
 ```
 djtagger/
 ├── __init__.py       # Package version
-├── cli.py            # Typer CLI — tag, info, stats, find, export, suggest, health; Rich UI
-├── config.py         # Environment variables, paths, constants, thresholds
-├── analyzer.py       # Essentia model loading and ML inference
+├── cli.py            # Typer CLI: tag, info, stats, find, export, genre-stats, rerole, suggest, health; Rich UI
+├── config.py         # Env vars, paths, constants, thresholds, set-role FEATURE_RANGE / ROLE_THRESHOLDS
+├── analyzer.py       # Essentia model loading and ML inference (returns the analysis result dict)
+├── dsp.py            # Pure-numpy audio features (centroid, flux, onset, sub-bass, dynamic range, loudness arc). NO Essentia, unit-tested
+├── classify.py       # Set-role model: drive/emo indices, energy bands, genre-relative bands, decide_role. NO Essentia, unit-tested
 ├── genres.py         # Beatport scraping, Last.fm API, remix scoring, genre resolution
-├── library.py        # Shared library scanning — reads all tracks into structured records
-├── scanner.py        # Recursive MP3 discovery and resume filtering
-└── tagger.py         # ID3 tag reading/writing via mutagen; filename parsing
+├── library.py        # Shared library scanning: reads all tracks into structured records
+├── scanner.py        # Recursive MP3 discovery, resume filtering, version-aware upgrade filtering
+└── tagger.py         # ID3 tag reading/writing via mutagen; role decision; filename parsing
 ```
 
 **Data flow for the `tag` command:**
@@ -633,16 +666,24 @@ djtagger/
 ```
 scanner.find_mp3s()          → list of MP3 paths (sorted alphabetically by directory/file)
   ↓
-scanner.filter_untagged()    → remove already-tagged files (unless --force)
+scanner.filter_untagged()    → remove already-tagged files (or filter_outdated for --upgrade)
   ↓
-analyzer.load_models()       → load 6 TensorFlow models into memory once
+analyzer.load_models()       → load the TensorFlow models into memory once
   ↓
   For each MP3:
     tagger.parse_filename()  → extract artist + title from filename
-    analyzer.analyze_track() → ML embeddings → genre predictions + mood scores
-    genres.resolve_metadata() → Beatport → Last.fm → ML fallback
-    tagger.write_tags()      → write ID3 tags, preserving existing data
+    analyzer.analyze_track() → ML embeddings → genre/mood/danceability/vocal + energy
+      └─ classify.compute_arc() → dsp features + drive/emo + provisional (global-band) role
+    genres.resolve_metadata() → Beatport → Last.fm → ML fallback (skipped in --upgrade if genre exists)
+    tagger.write_tags()      → SINGLE role decision point: classify.decide_role() using the
+                               genre actually written (genre-relative when genre-stats exists),
+                               then write ID3 tags, preserving existing data
 ```
+
+**Set-role tuning is decoupled from analysis.** The role decision reads only
+stored tags (`arc_level`, `drive`, `emo`, genre), so `djtagger rerole`
+re-applies changed `ROLE_THRESHOLDS` / `FEATURE_RANGE` library-wide in
+seconds without touching audio. See [Set Role](#set-role).
 
 ## Performance
 
