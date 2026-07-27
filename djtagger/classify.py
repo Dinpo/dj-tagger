@@ -24,6 +24,10 @@ from . import dsp
 from .config import (
     FEATURE_RANGE,
     GENRE_STATS_FILE,
+    HEAVINESS_BOOST,
+    HEAVINESS_RANGE,
+    HEAVINESS_W_DROP,
+    HEAVINESS_W_SUB,
     MOMENTUM_SCALE,
     ROLE_THRESHOLDS,
     ROLE_BUILDER,
@@ -36,7 +40,25 @@ __all__ = [
     "ROLE_OPENER", "ROLE_BUILDER", "ROLE_PEAK", "ROLE_CLOSER",
     "arc_momentum", "drive_emo", "classify_role", "compute_arc",
     "load_genre_stats", "genre_energy_percentile", "decide_role",
+    "heaviness", "effective_energy",
 ]
+
+
+def heaviness(sub_bass, drop_db) -> float:
+    """Structural heaviness in [0, 1]: sub-bass weight plus drop height."""
+    return (HEAVINESS_W_SUB * _normalize(sub_bass, *HEAVINESS_RANGE["sub_bass"])
+            + HEAVINESS_W_DROP * _normalize(drop_db, *HEAVINESS_RANGE["drop_db"]))
+
+
+def effective_energy(arc_level, sub_bass, drop_db) -> float:
+    """arc_level lifted by above-midpoint structural heaviness (one-way).
+
+    Compensates for the mood-based energy underrating smooth-but-heavy
+    tracks. Only ever raises the level, never lowers it, so tracks the
+    energy already rates correctly are unaffected.
+    """
+    boost = HEAVINESS_BOOST * max(0.0, heaviness(sub_bass, drop_db) - 0.5)
+    return min(1.0, arc_level + boost)
 
 
 def _normalize(x: float, lo: float, hi: float) -> float:
@@ -188,9 +210,10 @@ def decide_role(result: dict, genre: str = "", stats: dict | None = None) -> str
     """
     if stats is None:
         stats = load_genre_stats()
-    pctl = genre_energy_percentile(result["arc_level"], genre, stats)
-    return classify_role(result["arc_level"], result["drive"], result["emo"],
-                         genre_pctl=pctl)
+    level = effective_energy(result["arc_level"], result.get("sub_bass", 0.0),
+                             result.get("drop_db", 0.0))
+    pctl = genre_energy_percentile(level, genre, stats)
+    return classify_role(level, result["drive"], result["emo"], genre_pctl=pctl)
 
 
 def compute_arc(audio, sr, segment_energies, energy, valence, vocal=0.0) -> dict:
@@ -213,7 +236,9 @@ def compute_arc(audio, sr, segment_energies, energy, valence, vocal=0.0) -> dict
     momentum = arc_momentum(segment_energies)
     drive, emo = drive_emo(flux, onset, arc["slope"], valence, centroid,
                            arc["outro_db"], vocal)
-    role = classify_role(level, drive, emo)
+    # Provisional (global-band) role uses effective energy for consistency
+    # with decide_role; write_tags re-decides genre-aware from stored tags.
+    role = classify_role(effective_energy(level, subb, arc["drop_db"]), drive, emo)
 
     return {
         "spectral_centroid": round(centroid, 2),

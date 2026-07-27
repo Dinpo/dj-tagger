@@ -514,7 +514,10 @@ def rerole_file(filepath: str) -> tuple[str, str]:
     from . import classify
     try:
         new_role = classify.decide_role(
-            {"arc_level": lvl, "drive": drive, "emo": emo}, genre
+            {"arc_level": lvl, "drive": drive, "emo": emo,
+             "sub_bass": _txxx_float(tags, "SUB_BASS", 0.0),
+             "drop_db": _txxx_float(tags, "DROP_DB", 0.0)},
+            genre,
         )
     except Exception:
         return "error", ""

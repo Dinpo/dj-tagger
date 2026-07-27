@@ -162,3 +162,28 @@ def test_load_genre_stats_mtime_invalidation(tmp_path, monkeypatch):
 def test_genre_energy_percentile_malformed_entry():
     bad = {"tech house": {"n": 100, "q": ["not", "numbers"]}}
     assert classify.genre_energy_percentile(0.7, "tech house", bad, min_n=30) is None
+
+
+def test_effective_energy_boosts_heavy_lifts_role():
+    # A mid-energy track that is heavy (high sub-bass + real drop) gets its
+    # effective energy lifted; a light track at the same level does not.
+    heavy = classify.effective_energy(0.52, sub_bass=0.85, drop_db=24.0)
+    light = classify.effective_energy(0.52, sub_bass=0.40, drop_db=6.0)
+    assert heavy > 0.52          # lifted
+    assert light == 0.52         # untouched (below-midpoint heaviness)
+    assert heavy <= 1.0
+
+
+def test_effective_energy_never_lowers():
+    assert classify.effective_energy(0.90, sub_bass=0.30, drop_db=5.0) == 0.90
+
+
+def test_decide_role_heavy_track_escapes_opener():
+    # Mid-energy, low-in-genre, but heavy: with the boost it should not be an
+    # Opener. (Genre stats absent here -> global bands via effective energy.)
+    light = classify.decide_role(
+        {"arc_level": 0.54, "drive": 0.6, "emo": 0.2, "sub_bass": 0.4, "drop_db": 6.0}, "")
+    heavy = classify.decide_role(
+        {"arc_level": 0.54, "drive": 0.6, "emo": 0.2, "sub_bass": 0.85, "drop_db": 24.0}, "")
+    assert light == classify.ROLE_OPENER    # 0.54 <= opener_level, no boost
+    assert heavy != classify.ROLE_OPENER    # lifted above opener_level

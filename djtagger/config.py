@@ -213,6 +213,22 @@ ROLE_THRESHOLDS = {
     "drive_bias":        0.0,    # positive favors Closer, negative favors Builder
 }
 
+# Fix A: the mood-based energy underrates smooth-but-driving production
+# (melodic / hypnotic techno reads low even when it is a floor-filler). For
+# the role decision only, lift a track's *effective* energy by its structural
+# heaviness (sub-bass weight + drop height). One-directional: only heaviness
+# above the midpoint boosts, nothing is reduced, so already-correct tracks are
+# untouched. This is a partial fix: tracks with genuinely low measured energy
+# (~0.42) are not reachable without over-promoting the library, and are a
+# known limitation (raw energy and set-role decouple for hypnotic grooves).
+HEAVINESS_BOOST = 0.15   # max arc_level lift at maximum heaviness
+HEAVINESS_W_SUB = 0.4
+HEAVINESS_W_DROP = 0.6
+HEAVINESS_RANGE = {
+    "sub_bass": (0.51, 0.81),   # library p10..p90
+    "drop_db":  (8.0, 25.0),    # dB; capped (rare outliers exceed 100)
+}
+
 # Per-genre energy percentile table, produced by `djtagger genre-stats`.
 GENRE_STATS_FILE = os.path.join(MODEL_DIR, "genre_energy.json")
 
