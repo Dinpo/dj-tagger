@@ -125,7 +125,7 @@ def test_compute_arc_returns_all_keys_and_valid_role():
     seg = [0.4, 0.5, 0.6, 0.7]
     out = classify.compute_arc(audio, SR, seg, energy=0.55, valence=0.5, vocal=0.2)
     for k in ("spectral_centroid", "onset_rate", "dynamic_range", "sub_bass",
-              "flux", "vocal", "intro_db", "outro_db", "arc_slope", "drop_db",
+              "flux", "pulse_reg", "vocal", "intro_db", "outro_db", "arc_slope", "drop_db",
               "peak_pos", "arc_level", "arc_momentum", "drive", "emo", "set_role"):
         assert k in out, k
     assert out["set_role"] in {ROLE_OPENER, ROLE_BUILDER, ROLE_PEAK, ROLE_CLOSER}

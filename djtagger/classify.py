@@ -230,6 +230,7 @@ def compute_arc(audio, sr, segment_energies, energy, valence, vocal=0.0) -> dict
     dyn = dsp.dynamic_range(audio, sr, frames=frames_2048)
     subb = dsp.sub_bass_ratio(audio, sr)
     flux = dsp.spectral_flux(audio, sr, mags=mags_1024)
+    pulse = dsp.pulse_regularity(audio, sr)
     arc = dsp.loudness_arc(audio, sr)
 
     level = float(np.clip(energy, 0.0, 1.0))
@@ -246,6 +247,7 @@ def compute_arc(audio, sr, segment_energies, energy, valence, vocal=0.0) -> dict
         "dynamic_range": round(dyn, 2),
         "sub_bass": round(subb, 4),
         "flux": round(flux, 4),
+        "pulse_reg": round(pulse, 4),
         "vocal": round(float(vocal), 3),
         "intro_db": arc["intro_db"],
         "outro_db": arc["outro_db"],

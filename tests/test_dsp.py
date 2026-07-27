@@ -127,3 +127,27 @@ def test_loudness_arc_short_track_edges_do_not_overlap():
     loud = _sine(440, seconds=15.0, amp=0.8)
     arc = dsp.loudness_arc(np.concatenate([quiet, loud]), SR)
     assert arc["intro_db"] < arc["outro_db"] - 10.0
+
+
+def test_pulse_regularity_high_for_regular_beat():
+    # A 120 BPM click train (period 0.5s) has a strong regular pulse;
+    # an irregular click train is much weaker; a steady tone (no transients)
+    # is gated to zero.
+    sig = np.zeros(8 * SR, dtype=np.float32)
+    period = int(0.5 * SR)                 # 120 BPM
+    for i in range(16):
+        sig[i * period] = 1.0
+    regular = dsp.pulse_regularity(sig, SR)
+
+    steady = dsp.pulse_regularity(_sine(440, seconds=8.0), SR)
+
+    rng = np.random.RandomState(0)
+    irr = np.zeros(8 * SR, dtype=np.float32)
+    pos = np.cumsum(rng.randint(int(0.15 * SR), int(0.9 * SR), size=30))
+    for p in pos[pos < len(irr)]:
+        irr[p] = 1.0
+    irregular = dsp.pulse_regularity(irr, SR)
+
+    assert regular > 0.4
+    assert steady == 0.0          # tonal, no transients -> gated
+    assert regular > irregular

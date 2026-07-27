@@ -104,6 +104,50 @@ def spectral_flux(audio, sr, frame_size=1024, hop=512, mags=None) -> float:
     return float(flux.mean() / denom)
 
 
+def pulse_regularity(audio, sr, frame_size=1024, hop=512) -> float:
+    """Strength of the dominant beat periodicity in the energy envelope (0..1).
+
+    Autocorrelation of the half-wave-rectified per-frame RMS-energy envelope
+    (the "kick pulse"): the beat-band (90-150 BPM) peak minus the off-beat
+    baseline. High means a strong, metronomic pulse (a relentless
+    four-on-the-floor groove); low means a loose or sparse rhythm. The energy
+    envelope is used rather than spectral flux because flux picks up tonal
+    phase-drift artifacts that fake a pulse on pad-heavy material.
+
+    NOTE (2026-07-27): captured as a tag but NOT used in the role decision.
+    On a melodic-techno probe it only weakly separated hypnotic grooves from
+    atmospheric openers (heavy overlap). Stored for a future labeled
+    validation; see CLAUDE.md and the docs/superpowers note.
+    """
+    frames = _frames(audio, frame_size, hop)
+    if frames.shape[0] < 100:
+        return 0.0
+    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    onset = np.maximum(0.0, np.diff(rms))        # positive energy jumps = onsets
+    # Gate on absolute transient content: tonal/steady material has negligible
+    # onset energy relative to its level, and without this gate the ac0
+    # normalization below would amplify its micro-fluctuations into a fake pulse.
+    if onset.sum() / (rms.sum() + 1e-9) < 0.02:
+        return 0.0
+    env = onset - onset.mean()
+    ac0 = float(np.dot(env, env))
+    if ac0 <= 1e-9:
+        return 0.0
+    fps = sr / hop
+    beat_lo = max(1, int(fps * 60.0 / 150.0))            # 150 BPM
+    beat_hi = int(fps * 60.0 / 90.0)                      # 90 BPM
+    base_hi = min(int(fps * 60.0 / 45.0), len(env) - 1)  # out to ~45 BPM
+    acs = {lag: float(np.dot(env[:-lag], env[lag:])) / ac0
+           for lag in range(beat_lo, base_hi + 1)}
+    if not acs:
+        return 0.0
+    beat_peak = max(acs[l] for l in range(beat_lo, beat_hi + 1) if l in acs)
+    # A genuine metronomic pulse rises ABOVE the off-beat baseline; a smooth
+    # envelope (tonal pad, no transients) sits flat and scores near zero.
+    baseline = float(np.median(list(acs.values())))
+    return float(max(0.0, min(1.0, beat_peak - baseline)))
+
+
 def loudness_arc(audio, sr, frame_sec=1.0, hop_sec=0.5, edge_sec=20.0) -> dict:
     """Shape of the track's loudness envelope over time.
 

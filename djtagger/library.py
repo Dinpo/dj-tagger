@@ -58,7 +58,7 @@ def scan_library(
                      "peak_energy", "intro_energy", "energy_variance",
                      "arc_level", "arc_momentum", "spectral_centroid",
                      "onset_rate", "dynamic_range", "sub_bass",
-                     "flux", "vocal", "intro_db", "outro_db",
+                     "flux", "pulse_reg", "vocal", "intro_db", "outro_db",
                      "arc_slope", "drop_db", "peak_pos", "drive", "emo"):
             raw = tags.get(key, "")
             record[key] = float(raw) if raw else None

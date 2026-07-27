@@ -96,6 +96,7 @@ def read_tags(filepath: str) -> dict:
         "sub_bass": "",
         # v7 fields
         "flux": "",
+        "pulse_reg": "",
         "vocal": "",
         "intro_db": "",
         "outro_db": "",
@@ -156,6 +157,7 @@ def read_tags(filepath: str) -> dict:
         "SUB_BASS": "sub_bass",
         # v7 tags
         "FLUX": "flux",
+        "PULSE_REG": "pulse_reg",
         "VOCAL": "vocal",
         "INTRO_DB": "intro_db",
         "OUTRO_DB": "outro_db",
@@ -400,6 +402,7 @@ def write_tags(
             ("SUB_BASS", result["sub_bass"]),
             # v7 tags
             ("FLUX", result.get("flux", 0.0)),
+            ("PULSE_REG", result.get("pulse_reg", 0.0)),
             ("VOCAL", result.get("vocal", 0.0)),
             ("INTRO_DB", result.get("intro_db", 0.0)),
             ("OUTRO_DB", result.get("outro_db", 0.0)),

@@ -201,7 +201,7 @@ def analyze_track(
     Returns dict with keys: genres, electronic_genres, moods, danceability,
     arousal, valence, energy, raw_energy, peak_energy, intro_energy,
     energy_variance, spectral_centroid, onset_rate, dynamic_range, sub_bass,
-    flux, vocal, intro_db, outro_db, arc_slope, drop_db, peak_pos,
+    flux, pulse_reg, vocal, intro_db, outro_db, arc_slope, drop_db, peak_pos,
     arc_level, arc_momentum, drive, emo, set_role, bpm, key, key_strength,
     duration.
     """
@@ -396,7 +396,7 @@ def analyze_track(
         )
         arc = {
             "spectral_centroid": 0.0, "onset_rate": 0.0, "dynamic_range": 0.0,
-            "sub_bass": 0.0, "flux": 0.0, "vocal": vocal,
+            "sub_bass": 0.0, "flux": 0.0, "pulse_reg": 0.0, "vocal": vocal,
             "intro_db": 0.0, "outro_db": 0.0, "arc_slope": 0.0,
             "drop_db": 0.0, "peak_pos": 0.5,
             "arc_level": energy, "arc_momentum": 0.0,
@@ -422,6 +422,7 @@ def analyze_track(
         "dynamic_range": arc["dynamic_range"],
         "sub_bass": arc["sub_bass"],
         "flux": arc["flux"],
+        "pulse_reg": arc["pulse_reg"],
         "vocal": arc["vocal"],
         "intro_db": arc["intro_db"],
         "outro_db": arc["outro_db"],
