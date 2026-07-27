@@ -78,6 +78,14 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   in the hidden detail comment. Do not remove the tag.
 - **`FEATURE_RANGE` has no `dynamic_range`/`sub_bass` entries**: those raw
   features are written as tags but do not feed the role decision.
+- **`pulse_regularity` (PULSE_REG) is captured but unused in roles.** It
+  measures beat-pulse strength. Investigated for detecting hypnotic grooves
+  (which read as false Openers because raw energy and set-role decouple for
+  them); it only weakly separates hypnotic grooves from atmospheric openers,
+  so it is stored for a future labeled validation but does NOT affect
+  set_role. Full write-up:
+  `docs/superpowers/notes/2026-07-27-hypnotic-groove-pulse-regularity.md`.
+  Existing tracks have no PULSE_REG until a re-analysis/backfill.
 - **Honest failures.** If `compute_arc` raises, `analyze_track` logs a
   warning, writes an EMPTY role, and sets `arc_ok=False`. Never fabricate a
   role from neutral values (that silently mislabels and poisons calibration).
