@@ -72,14 +72,25 @@ def test_role_closer_mid_band_emo_wins():
     assert classify.classify_role(0.65, 0.3, 0.7, T) == ROLE_CLOSER
 
 
-def test_role_genre_percentile_overrides_global_band():
-    # Globally mid energy, but top of its own genre -> Peak.
+def test_role_genre_percentile_promotes_to_peak():
+    # Globally mid energy, but top of its own genre -> promoted to Peak.
     assert classify.classify_role(0.60, 0.3, 0.7, T, genre_pctl=0.90) == ROLE_PEAK
-    # Globally mid energy, but bottom of its own genre -> Opener.
-    assert classify.classify_role(0.60, 0.7, 0.3, T, genre_pctl=0.10) == ROLE_OPENER
-    # Genre percentile mid -> falls through to drive/emo split even if the
-    # global level would have said Peak.
-    assert classify.classify_role(0.90, 0.7, 0.3, T, genre_pctl=0.50) == ROLE_BUILDER
+
+
+def test_role_absolute_high_energy_is_peak_regardless_of_genre():
+    # A 0.90-energy track sitting only mid in a hot genre is still a Peak:
+    # genre banding must not demote an absolute banger.
+    assert classify.classify_role(0.90, 0.7, 0.3, T, genre_pctl=0.50) == ROLE_PEAK
+    assert classify.classify_role(0.90, 0.7, 0.3, T, genre_pctl=0.10) == ROLE_PEAK
+
+
+def test_role_opener_requires_low_absolute_and_low_genre():
+    # Low within its genre but absolutely mid -> NOT Opener (falls to the
+    # drive/emo split); only low-on-both is an Opener.
+    assert classify.classify_role(0.60, 0.7, 0.3, T, genre_pctl=0.10) == ROLE_BUILDER
+    assert classify.classify_role(0.45, 0.7, 0.3, T, genre_pctl=0.10) == ROLE_OPENER
+    # Absolutely low but NOT low within its (deep) genre -> not forced Opener.
+    assert classify.classify_role(0.45, 0.3, 0.7, T, genre_pctl=0.60) == ROLE_CLOSER
 
 
 # ─── genre stats helpers ────────────────────────────────────

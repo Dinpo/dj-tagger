@@ -84,18 +84,22 @@ def classify_role(arc_level, drive, emo, thresholds=None, genre_pctl=None) -> st
     """Map energy band + character indices to a discrete role.
 
     genre_pctl, when given, is the track's energy percentile within its own
-    genre cohort (0..1) and replaces the global energy bands entirely.
+    genre cohort (0..1). Genre-relative banding can only PROMOTE a track to
+    Peak or filter it out of Opener, never the reverse: the absolute energy
+    band always stands on its own so a genre cohort cannot demote an obvious
+    banger nor force an absolutely-energetic track into Opener.
     """
     t = thresholds or ROLE_THRESHOLDS
-    if genre_pctl is not None:
-        if genre_pctl >= t["peak_genre_pctl"]:
-            return ROLE_PEAK
-        if genre_pctl <= t["opener_genre_pctl"]:
-            return ROLE_OPENER
-    else:
-        if arc_level >= t["peak_level"]:
-            return ROLE_PEAK
-        if arc_level <= t["opener_level"]:
+    # Peak: absolutely high energy, OR top of its genre cohort.
+    if arc_level >= t["peak_level"]:
+        return ROLE_PEAK
+    if genre_pctl is not None and genre_pctl >= t["peak_genre_pctl"]:
+        return ROLE_PEAK
+    # Opener: absolutely low energy, AND (when known) low within its genre.
+    # Requiring both keeps a mid-energy track that merely sits low in a hot
+    # genre out of Opener.
+    if arc_level <= t["opener_level"]:
+        if genre_pctl is None or genre_pctl <= t["opener_genre_pctl"]:
             return ROLE_OPENER
     return ROLE_BUILDER if drive >= emo + t["drive_bias"] else ROLE_CLOSER
 
