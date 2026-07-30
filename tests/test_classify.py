@@ -187,3 +187,14 @@ def test_decide_role_heavy_track_escapes_opener():
         {"arc_level": 0.54, "drive": 0.6, "emo": 0.2, "sub_bass": 0.85, "drop_db": 24.0}, "")
     assert light == classify.ROLE_OPENER    # 0.54 <= opener_level, no boost
     assert heavy != classify.ROLE_OPENER    # lifted above opener_level
+
+
+def test_decide_role_genre_percentile_uses_raw_not_boosted_energy():
+    # Genre percentile must use RAW energy (the table is raw-built), so a
+    # heavy track is not double-promoted: boosted 0.675 would rank ~p92
+    # (Peak) but raw 0.60 ranks ~p67 (not Peak).
+    q = list(np.linspace(0.40, 0.70, 21))
+    stats = {"x": {"n": 100, "q": q}}
+    r = {"arc_level": 0.60, "drive": 0.3, "emo": 0.7,
+         "sub_bass": 0.95, "drop_db": 40.0}
+    assert classify.decide_role(r, "x", stats) != ROLE_PEAK

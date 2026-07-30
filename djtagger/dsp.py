@@ -141,7 +141,8 @@ def pulse_regularity(audio, sr, frame_size=1024, hop=512) -> float:
            for lag in range(beat_lo, base_hi + 1)}
     if not acs:
         return 0.0
-    beat_peak = max(acs[l] for l in range(beat_lo, beat_hi + 1) if l in acs)
+    beat_peak = max((acs[l] for l in range(beat_lo, beat_hi + 1) if l in acs),
+                    default=0.0)
     # A genuine metronomic pulse rises ABOVE the off-beat baseline; a smooth
     # envelope (tonal pad, no transients) sits flat and scores near zero.
     baseline = float(np.median(list(acs.values())))

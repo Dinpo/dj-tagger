@@ -461,7 +461,7 @@ Genre detection tries three sources in priority order, stopping at the first hit
 
 **Last.fm** uses the `artist.getTopTags` endpoint. Only tags with a play count above a minimum threshold (default 20) are kept. The cleaned artist name is tried first, then the raw artist name. When Last.fm succeeds, its genres are merged with ML predictions (Last.fm genres first, then ML genres not already in the list).
 
-**ML fallback** uses genres from the Discogs-EffNet model where the predicted probability exceeds the keep threshold (default 0.10). Genre labels follow the Discogs taxonomy (e.g., `Electronic---Drum n Bass`) and are cleaned to use only the sub-genre portion (e.g., `Drum n Bass`).
+**ML fallback** uses genres from the Discogs-EffNet model where the predicted probability exceeds the keep threshold (default 0.10). Genre labels follow the Discogs taxonomy (e.g., `Electronic---Drum n Bass`) and are cleaned to use only the sub-genre portion (e.g., `Drum n Bass`). The separate electronic-genre head is only allowed to lead when it is **confident and dominant** (top probability clearly above the runner-up); when its distribution is flat (the model is uncertain), it is ignored so its guesses don't get prepended ahead of the coherent Discogs labels. This prevents the incoherent wide mixes (e.g. `ambient; house; dnb; ...`) that a flat electronic head otherwise produced on ML-only tracks.
 
 ### Remix-Aware Matching
 

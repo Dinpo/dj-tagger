@@ -221,7 +221,9 @@ ROLE_THRESHOLDS = {
 # untouched. This is a partial fix: tracks with genuinely low measured energy
 # (~0.42) are not reachable without over-promoting the library, and are a
 # known limitation (raw energy and set-role decouple for hypnotic grooves).
-HEAVINESS_BOOST = 0.15   # max arc_level lift at maximum heaviness
+HEAVINESS_BOOST = 0.15   # scales heaviness-above-midpoint; max lift ~0.075
+                         # (boost = HEAVINESS_BOOST * max(0, heaviness - 0.5),
+                         # and heaviness maxes at 1.0, so the ceiling is 0.075)
 HEAVINESS_W_SUB = 0.4
 HEAVINESS_W_DROP = 0.6
 HEAVINESS_RANGE = {

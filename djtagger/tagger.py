@@ -366,6 +366,16 @@ def write_tags(
         # provisional; this applies genre-relative bands when stats exist.
         # Skipped when arc analysis failed (arc_ok False): an empty role is
         # written rather than one fabricated from neutral values.
+        # Existing role/detected genre, used to avoid erasing good data on a
+        # run where analysis did not (re)produce them.
+        existing_role = ""
+        existing_detected = ""
+        for frame in tags.getall("TXXX"):
+            if frame.desc == "SET_ROLE" and frame.text:
+                existing_role = frame.text[0].strip()
+            elif frame.desc == "GENRE_DETECTED" and frame.text:
+                existing_detected = frame.text[0]
+
         if result.get("arc_ok", True) and result.get("set_role", "") != "":
             from . import classify
             try:
@@ -374,6 +384,15 @@ def write_tags(
                 # Stats lookup failed for this track; the analyzer's
                 # global-band role is still a valid decision, keep it.
                 pass
+        elif not result.get("set_role", ""):
+            # Arc analysis failed this run (arc_ok False): keep the previously
+            # written role rather than erasing it with an empty string.
+            result["set_role"] = LEGACY_ROLES.get(existing_role, existing_role)
+
+        # GENRE_DETECTED: keep the existing value when this run resolved no
+        # genres by design (e.g. --upgrade keeping the file's existing genre),
+        # so the ML-detected audit trail is not blanked.
+        detected_val = "; ".join(genre_list[:4]) if genre_list else existing_detected
 
         # TXXX custom tags (only our namespaced keys)
         for key, val in [
@@ -384,7 +403,7 @@ def write_tags(
             ("MOOD_AGGRESSIVE", result["moods"]["aggressive"]),
             ("MOOD_RELAXED", result["moods"]["relaxed"]),
             ("GENRE_SOURCE", genre_source),
-            ("GENRE_DETECTED", "; ".join(genre_list[:4])),
+            ("GENRE_DETECTED", detected_val),
             ("TAGGER_VERSION", TAGGER_VERSION),
             # v5 tags
             ("DANCEABILITY", result["danceability"]),
@@ -527,9 +546,11 @@ def rerole_file(filepath: str) -> tuple[str, str]:
 
     role_fr = tags.get("TXXX:SET_ROLE")
     stored = str(role_fr.text[0]).strip() if role_fr and role_fr.text else ""
-    old_role = LEGACY_ROLES.get(stored, stored)
-    if new_role == old_role:
-        return "unchanged", new_role  # no write, keep it cheap
+    if new_role == stored:
+        return "unchanged", new_role  # raw frame already correct, keep it cheap
+    # Note: when only the label changed (a legacy v6 name like "Warm-up" whose
+    # translation equals new_role), we still fall through and rewrite the frame
+    # so the on-disk value matches the current vocabulary.
 
     try:
         tags.delall("TXXX:SET_ROLE")

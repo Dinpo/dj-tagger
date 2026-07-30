@@ -210,9 +210,15 @@ def decide_role(result: dict, genre: str = "", stats: dict | None = None) -> str
     """
     if stats is None:
         stats = load_genre_stats()
-    level = effective_energy(result["arc_level"], result.get("sub_bass", 0.0),
+    raw = result["arc_level"]
+    level = effective_energy(raw, result.get("sub_bass", 0.0),
                              result.get("drop_db", 0.0))
-    pctl = genre_energy_percentile(level, genre, stats)
+    # Genre percentile is looked up with RAW energy, because the genre stats
+    # table is built from raw ENERGY values. Using the heaviness-boosted level
+    # here would compare a lifted value against an unlifted distribution and
+    # double-count heaviness (once via the absolute band, again via an
+    # inflated within-genre rank). The boost applies only to the absolute band.
+    pctl = genre_energy_percentile(raw, genre, stats)
     return classify_role(level, result["drive"], result["emo"], genre_pctl=pctl)
 
 

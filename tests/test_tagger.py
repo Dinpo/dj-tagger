@@ -139,3 +139,45 @@ def test_rerole_unchanged_when_role_stable(tmp_path):
         tags.add(TXXX(encoding=3, desc=desc, text=[val]))
     tags.save(p)
     assert tagger.rerole_file(p) == ("unchanged", "Peak")
+
+
+def test_write_tags_keeps_existing_role_on_arc_failure(tmp_path):
+    # A previously-tagged Peak; this run's arc analysis failed (arc_ok False,
+    # empty role). The existing role must be preserved, not erased.
+    p = str(tmp_path / "arcfail.mp3")
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc="SET_ROLE", text=["Peak"]))
+    tags.save(p)
+    ok, _ = tagger.write_tags(
+        p, _full_result(set_role="", arc_ok=False), "ml", ["House"])
+    assert ok
+    info = tagger.read_tags(p)
+    assert info["set_role"] == "Peak"
+    assert "Role: Peak" in info["comment"]
+
+
+def test_write_tags_preserves_genre_detected_when_no_new_genres(tmp_path):
+    # --upgrade keeps the existing genre and passes genre_list=[]; the
+    # GENRE_DETECTED audit trail must not be blanked.
+    p = str(tmp_path / "gd.mp3")
+    tags = ID3()
+    tags.add(TXXX(encoding=3, desc="GENRE_DETECTED", text=["House; Techno"]))
+    tags.save(p)
+    ok, _ = tagger.write_tags(p, _full_result(), "beatport", [])
+    assert ok
+    assert tagger.read_tags(p)["genre_detected"] == "House; Techno"
+
+
+def test_rerole_persists_legacy_name_when_role_matches(tmp_path):
+    # v6 "Warm-up" that recomputes to its translation "Opener": the raw frame
+    # must be rewritten to the current vocabulary, not left as "Warm-up".
+    p = str(tmp_path / "legacy_rr.mp3")
+    tags = ID3()
+    for d, v in [("SET_ROLE", "Warm-up"), ("ARC_LEVEL", "0.45"),
+                 ("DRIVE", "0.3"), ("EMO", "0.7"), ("ENERGY", "0.45"),
+                 ("VALENCE", "0.6")]:
+        tags.add(TXXX(encoding=3, desc=d, text=[v]))
+    tags.save(p)
+    status, role = tagger.rerole_file(p)
+    assert role == "Opener"
+    assert str(ID3(p)["TXXX:SET_ROLE"]) == "Opener"   # raw frame normalized
