@@ -39,11 +39,21 @@ Builder vs Closer by character** via a `drive` index (spectral flux + onset +
 rising loudness) vs an `emo` index (valence + brightness + vocals + fading
 outro). See `classify.classify_role`.
 
-- **Genre-relative bands.** When `genre_energy.json` exists (built by
-  `djtagger genre-stats`) and the track's genre cohort is >= 30, the energy
-  band comes from the track's percentile WITHIN its genre, so a melodic-house
-  peak is not judged against the whole library's hardest tracks. Else global
-  cutoffs (`opener_level` 0.55, `peak_level` 0.80 on `arc_level`) apply.
+- **Genre-relative bands (promote-only, "Fix B").** The absolute band always
+  stands: `arc_level >= peak_level` (0.80) is Peak; Opener requires
+  `arc_level <= opener_level` (0.55). On top of that, when `genre_energy.json`
+  exists (built by `djtagger genre-stats`) and the cohort is >= 30, being high
+  within its genre can additionally promote to Peak, and Opener also requires
+  being low within its genre. Net: genre banding only ever PROMOTES to Peak or
+  filters out of Opener; it never demotes an absolute banger. (It is NOT the
+  old "genre replaces global bands" logic.)
+- **Effective energy / heaviness lift ("Fix A").** `decide_role` and
+  `compute_arc` band on an *effective* energy = `arc_level` plus a
+  one-directional boost (max +0.15) from structural heaviness (`sub_bass` +
+  `drop_db`), so smooth-but-heavy tracks the mood-energy underrates are not
+  forced into Opener. Never lowers energy; the stored `arc_level` stays raw.
+  Partial fix only: genuinely low-energy hypnotic grooves (~0.42) are a
+  documented limitation (see the docs/superpowers note).
 - **Single decision point.** The role is decided in `tagger.write_tags` via
   `classify.decide_role`, using the genre actually written to TCON (not the
   proposed genre). `compute_arc` only assigns a provisional global-band role.
@@ -109,14 +119,21 @@ Never use the em dash character (U+2014) anywhere (comments, commit
 messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
 (Box-drawing `─` is fine.) This is enforced in code review.
 
-## Current state (2026-07-27)
+## Current state (2026-07-30)
 
 - v7 set-role feature shipped; committed on `main` (unpushed unless the user
   asked). Design docs in `docs/superpowers/specs/` and `plans/` cover the v6
   origin; v7 evolved past them; this file + the README are current.
-- **The whole library (~3,553 tracks) is tagged at v7.** Distribution:
-  Opener 29.5% / Builder 19.7% / Peak 24.8% / Closer 26.0%. Zero arc failures.
+- **The whole library (~3,553 tracks) is tagged at v7** and reroled after Fix
+  A + Fix B. Distribution: Opener 20% / Builder 21% / Peak 33% / Closer 26%.
+  Zero arc failures.
 - **Pending: user grading.** The user is validating roles by ear (roles are
   in the Serato comments). Next step once corrections arrive: adjust
-  `ROLE_THRESHOLDS` / `FEATURE_RANGE` → `rerole` → re-check. Genre precision
-  is deliberately NOT the priority (85% are already Beatport-curated).
+  `ROLE_THRESHOLDS` / `FEATURE_RANGE` → `rerole` → re-check.
+- **Open thread: ML-genre quality.** ~400 ml-source tracks (no Beatport/
+  Last.fm hit) can get a wide/incoherent genre mix (e.g. "ambient; house;
+  dnb; Electro House"). Root cause: `genres.resolve_metadata` trusts the
+  electronic-genre head on just a `> 0.20` top-prob gate, which fires even
+  when that head is flat/uncertain, prepending noise ahead of the coherent
+  Discogs-400 labels. Fix in progress: gate the electronic head on dominance
+  (a margin over the runner-up), not a bare threshold.

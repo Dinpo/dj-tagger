@@ -439,9 +439,13 @@ Each track is classified into one of four DJ set roles and written as the first 
 
 Energy bands decide Opener vs Peak. Builder and Closer share the mid band and are split by character: a **drive** index (spectral flux, onset rate, rising loudness) against an **emo** index (valence, brightness, vocal presence, fading outro). Both indices are written as tags (`DRIVE`, `EMO`), alongside the raw features that feed them: spectral flux, vocal presence (voice/instrumental model on the existing EffNet embeddings), and a loudness-arc analysis of the track's envelope (intro/outro depth in dB, loudness slope, breakdown-to-drop height, peak position).
 
-**Genre-relative bands:** run `djtagger genre-stats` once to build a per-genre energy table from the tagged library. When a track's genre cohort is large enough (30+ tracks), its energy band comes from the track's percentile *within its own genre*, so a melodic-house peak is not measured against the whole library's hardest tracks. Without the table (or for small genres), global energy cutoffs apply (`opener_level` 0.55, `peak_level` 0.80 on `arc_level`).
+**Genre-relative bands:** run `djtagger genre-stats` once to build a per-genre energy table from the tagged library. The absolute energy band always stands (`arc_level` >= `peak_level` 0.80 is Peak; Opener requires energy at or below `opener_level` 0.55). On top of that, when a track's genre cohort is large enough (30+ tracks), being high *within its own genre* can additionally promote it to Peak, and Opener also requires being low within its genre. So genre banding only ever *promotes* a low-energy melodic peak or filters a track out of Opener; it never demotes an absolute banger.
 
-All thresholds and normalization ranges are calibrated against the library and stored in `config.py` (`ROLE_THRESHOLDS` / `FEATURE_RANGE`). On the calibration sample this yields roughly Opener 33% / Builder 21% / Peak 24% / Closer 22%.
+**Heavy-track lift (effective energy):** the mood-based energy underrates smooth-but-driving production (melodic/hypnotic techno reads low even when it is a floor-filler). For the role decision only, a track's *effective* energy is lifted by its structural heaviness (sub-bass weight + drop height), one-directional (never lowered). The stored `arc_level` remains the raw measured energy. This is a partial fix; genuinely low-energy hypnotic grooves remain a known limitation (see `docs/superpowers/notes/`).
+
+All thresholds and normalization ranges are calibrated against the library and stored in `config.py` (`ROLE_THRESHOLDS` / `FEATURE_RANGE`). On the full library this yields roughly Opener 20% / Builder 21% / Peak 33% / Closer 26%.
+
+**Tuning:** roles are decided from stored tags, so after editing the thresholds you can re-apply them library-wide in seconds with `djtagger rerole` (no re-analysis). See [Set-role tuning](#set-role-tuning-genre-stats-and-rerole).
 
 ### 3-Tier Genre Resolution
 
@@ -509,6 +513,7 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Dynamic range | `TXXX:DYNAMIC_RANGE` | Value in dB | Quiet-loud contrast, low-level DSP feature |
 | Sub-bass ratio | `TXXX:SUB_BASS` | Score 0-1 | Fraction of energy below 120 Hz |
 | Spectral flux | `TXXX:FLUX` | Score ~0.2-0.5 | How fast the spectrum changes (musical activity) |
+| Pulse regularity | `TXXX:PULSE_REG` | Score 0-1 | Beat-pulse strength; captured for future use, not yet in the role decision |
 | Vocal presence | `TXXX:VOCAL` | Score 0-1 | Voice/instrumental model, mean voice probability |
 | Intro depth | `TXXX:INTRO_DB` | dB <= 0 | How far the first 20 s sit below the loudest moment |
 | Outro depth | `TXXX:OUTRO_DB` | dB <= 0 | How far the last 20 s sit below the loudest moment |
