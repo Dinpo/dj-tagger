@@ -243,9 +243,18 @@ def _merge_genres(
     if existing_source and n_tier > e_tier:
         return (
             proposed_str,
-            f"upgraded source {existing_source}→{new_source}: "
-            f"'{existing}' → '{proposed_str}'",
+            f"upgraded source {existing_source}->{new_source}: "
+            f"'{existing}' -> '{proposed_str}'",
         )
+
+    # Same-source refresh: a fresh resolution from the same djtagger source
+    # supersedes our own prior output for it. Replace rather than merge, so a
+    # re-tag (e.g. tag --retag-source ml after a resolver fix) does not merge
+    # the stale wide genre back into the newly cleaned one.
+    if existing_source and existing_source == new_source:
+        if _genre_tokens(existing) == _genre_tokens(proposed_str):
+            return existing, "matches"
+        return proposed_str, f"refreshed {new_source}: '{existing}' -> '{proposed_str}'"
 
     e_tokens = _genre_tokens(existing)
     p_tokens = _genre_tokens(proposed_str)

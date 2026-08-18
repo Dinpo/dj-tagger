@@ -181,3 +181,26 @@ def test_rerole_persists_legacy_name_when_role_matches(tmp_path):
     status, role = tagger.rerole_file(p)
     assert role == "Opener"
     assert str(ID3(p)["TXXX:SET_ROLE"]) == "Opener"   # raw frame normalized
+
+
+def test_merge_genres_same_source_refresh_replaces_not_merges():
+    # Re-resolving an ml genre must replace the stale wide mix, not merge it.
+    new, action = tagger._merge_genres(
+        "ambient; house; dnb; Electro House",
+        ["House", "Electro House", "Tropical House"],
+        existing_source="ml", new_source="ml")
+    assert new == "House; Electro House; Tropical House"
+    assert "ambient" not in new.lower()
+
+
+def test_merge_genres_cross_source_still_merges():
+    # A different existing source (or user genre) is still merged, not clobbered.
+    new, _ = tagger._merge_genres(
+        "Techno", ["House"], existing_source="", new_source="ml")
+    assert "techno" in new.lower() and "house" in new.lower()
+
+
+def test_merge_genres_beatport_still_upgrades_over_ml():
+    new, _ = tagger._merge_genres(
+        "ambient; house", ["Melodic Techno"], existing_source="ml", new_source="beatport")
+    assert new == "Melodic Techno"
