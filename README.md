@@ -201,7 +201,7 @@ Shows all DJ Tagger tags with colored bars for energy, valence, and mood scores:
  😌 Relaxed           ████░░░░░░░░░░░  0.258
 
  Comment              Role: Peak | Energy: High | Mood: Bright | Edge: Hard | Peak: 0.98 | Intro: Hot
- Tagger version       v7
+ Tagger version       v8
 ```
 
 ### Library statistics
@@ -522,7 +522,7 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Peak position | `TXXX:PEAK_POS` | 0-1 | Where the loudest moment sits in the track |
 | Drive index | `TXXX:DRIVE` | Score 0-1 | Builder character: flux + onsets + rising loudness |
 | Emo index | `TXXX:EMO` | Score 0-1 | Closer character: valence + brightness + vocals + fade |
-| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v7` | For tracking re-tag needs |
+| Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v8` | For tracking re-tag needs |
 | Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Human-readable, visible in Serato/rekordbox |
 | Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
@@ -627,7 +627,7 @@ Log files are overwritten on each `tag` run (not appended).
 {
   "state": "running",
   "mode": "TAGGING",
-  "version": "v7",
+  "version": "v8",
   "total": 3312,
   "to_process": 150,
   "skipped": 3162,

@@ -22,7 +22,10 @@ LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────
 
-TAGGER_VERSION = "v7"
+# Bump this whenever the set of stored tags or the analysis output changes,
+# so `tag --upgrade` can find files that predate the change. v8 marks the
+# addition of PULSE_REG (v7 files analyzed before it lack that frame).
+TAGGER_VERSION = "v8"
 
 # Genres considered generic / empty — will be replaced
 GENERIC_GENRES = {"other", "unknown", "misc", "music", ""}
