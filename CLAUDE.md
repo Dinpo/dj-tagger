@@ -88,6 +88,14 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   in the hidden detail comment. Do not remove the tag.
 - **`FEATURE_RANGE` has no `dynamic_range`/`sub_bass` entries**: those raw
   features are written as tags but do not feed the role decision.
+- **ENTRY/EXIT cue detection was investigated and PARKED** (2026-09-03).
+  The user marks intro/outro boundaries as Serato ENTRY/EXIT cues; three
+  detectors scored 30% / 37% / 16% exact against a 23% no-audio baseline, so
+  nothing shipped. Key finding: those markers are NOT an energy/bass event
+  (tracks marked at bar 16-32 are already full at bar 0), they track melodic
+  identity. `scripts/serato_cues.py` reads the markers back as ground truth.
+  Full write-up:
+  `docs/superpowers/notes/2026-09-03-entry-exit-cue-detection.md`.
 - **`pulse_regularity` (PULSE_REG) is captured but unused in roles.** It
   measures beat-pulse strength. Investigated for detecting hypnotic grooves
   (which read as false Openers because raw energy and set-role decouple for
