@@ -12,7 +12,7 @@ ID3 tags: genre (Beatport → Last.fm → ML), energy, valence, moods, and a
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 45, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 61, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
   auto-memory). Filenames follow `Artist - Title.mp3`.
@@ -127,21 +127,23 @@ Never use the em dash character (U+2014) anywhere (comments, commit
 messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
 (Box-drawing `─` is fine.) This is enforced in code review.
 
-## Current state (2026-07-30)
+## Current state (2026-10-26)
 
-- v7 set-role feature shipped; committed on `main` (unpushed unless the user
-  asked). Design docs in `docs/superpowers/specs/` and `plans/` cover the v6
-  origin; v7 evolved past them; this file + the README are current.
-- **The whole library (~3,553 tracks) is tagged at v7** and reroled after Fix
-  A + Fix B. Distribution: Opener 20% / Builder 21% / Peak 33% / Closer 26%.
-  Zero arc failures.
-- **Pending: user grading.** The user is validating roles by ear (roles are
-  in the Serato comments). Next step once corrections arrive: adjust
-  `ROLE_THRESHOLDS` / `FEATURE_RANGE` → `rerole` → re-check.
-- **Open thread: ML-genre quality.** ~400 ml-source tracks (no Beatport/
-  Last.fm hit) can get a wide/incoherent genre mix (e.g. "ambient; house;
-  dnb; Electro House"). Root cause: `genres.resolve_metadata` trusts the
-  electronic-genre head on just a `> 0.20` top-prob gate, which fires even
-  when that head is flat/uncertain, prepending noise ahead of the coherent
-  Discogs-400 labels. Fix in progress: gate the electronic head on dominance
-  (a margin over the runner-up), not a bare threshold.
+- `TAGGER_VERSION` is **v8** (bumped when PULSE_REG was added; bump again
+  whenever the stored tag set changes so `tag --upgrade` can find stale files).
+  All work committed and pushed to `origin/main`.
+- **Library verified 100%:** all 3,690 tracks in `_DJ Music` are at v8 with a
+  valid role, PULSE_REG, energy, a non-junk genre, and a `Role:` comment.
+  Distribution roughly Opener 21% / Builder 20% / Peak 33% / Closer 25%.
+- **ML-genre quality: fixed and applied.** The 5-class electronic genre head
+  (ambient/dnb/house/techno/trance, chance = 0.20) may only lead when
+  top >= 0.40 AND it leads the runner-up by >= 0.10; otherwise the finer
+  Discogs-400 labels win. Same-source re-tags replace (not merge) their own
+  prior genre. Apply resolver changes with `tag --retag-source ml`.
+- **Verifying "properly tagged":** the resume check only looks for
+  GENRE_SOURCE, so it does not prove completeness. To verify, read every
+  file and check version, role, PULSE_REG, energy, genre and comment. Match
+  `.mp3` case-insensitively (the library has `.MP3` / `.Mp3` files).
+- **Pending, user-driven:** grading roles by ear, then tune
+  `ROLE_THRESHOLDS` / `FEATURE_RANGE` and `rerole`. Parked: hypnotic-groove
+  detection and ENTRY/EXIT cue detection (both need more labels; see notes).
