@@ -163,12 +163,16 @@ djtagger tag /path/to/music --fix-comments
 
 # Upgrade older-version tracks to the current tagger (keeps their genres)
 djtagger tag /path/to/music --upgrade
+
+# Re-resolve only tracks whose genre came from one source (e.g. after a resolver fix)
+djtagger tag /path/to/music --retag-source ml
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Analyze files and resolve genres but don't write any tags |
-| `--force` | Re-tag files even if they already have a `GENRE_SOURCE` tag |
+| `--force` | Re-tag files even if they already have a `GENRE_SOURCE` tag. Caution on bulk runs: if a Beatport lookup fails transiently, the ML fallback is merged into the existing curated genre. Prefer `--upgrade` or `--retag-source` |
+| `--retag-source SRC` | Re-tag only files whose `GENRE_SOURCE` equals `SRC` (`ml`, `lastfm+ml`, `beatport`). Use after changing genre resolution; ML-only tracks can be upgraded to a Beatport match |
 | `--no-beatport` | Skip Beatport scraping; use Last.fm + ML only |
 | `--detect-bpm-key` | Also detect BPM and key (off by default — DJ software usually owns these) |
 | `--fix-comments` | Regenerate `COMM` tags from existing energy/valence values (no ML re-analysis) |
@@ -461,7 +465,7 @@ Genre detection tries three sources in priority order, stopping at the first hit
 
 **Last.fm** uses the `artist.getTopTags` endpoint. Only tags with a play count above a minimum threshold (default 20) are kept. The cleaned artist name is tried first, then the raw artist name. When Last.fm succeeds, its genres are merged with ML predictions (Last.fm genres first, then ML genres not already in the list).
 
-**ML fallback** uses genres from the Discogs-EffNet model where the predicted probability exceeds the keep threshold (default 0.10). Genre labels follow the Discogs taxonomy (e.g., `Electronic---Drum n Bass`) and are cleaned to use only the sub-genre portion (e.g., `Drum n Bass`). The separate electronic-genre head is only allowed to lead when it is **confident and dominant** (top probability clearly above the runner-up); when its distribution is flat (the model is uncertain), it is ignored so its guesses don't get prepended ahead of the coherent Discogs labels. This prevents the incoherent wide mixes (e.g. `ambient; house; dnb; ...`) that a flat electronic head otherwise produced on ML-only tracks.
+**ML fallback** uses genres from the Discogs-EffNet model where the predicted probability exceeds the keep threshold (default 0.10). Genre labels follow the Discogs taxonomy (e.g., `Electronic---Drum n Bass`) and are cleaned to use only the sub-genre portion (e.g., `Drum n Bass`). The separate 5-class electronic-genre head (ambient / dnb / house / techno / trance, so chance is 0.20) is only allowed to lead when it is **confident and dominant** (top probability >= 0.40 and at least 0.10 above the runner-up); when its distribution is flat (the model is uncertain), it is ignored so its guesses don't get prepended ahead of the coherent Discogs labels. This prevents the incoherent wide mixes (e.g. `ambient; house; dnb; ...`) that a flat electronic head otherwise produced on ML-only tracks.
 
 ### Remix-Aware Matching
 
@@ -542,6 +546,8 @@ When writing the `TCON` (Genre) frame, DJ Tagger compares the existing value aga
 | disjoint or partial overlap | **merge** — append proposed genres, deduped at token level, capped at 5 total |
 
 The merge rule means a Coldplay rock/house crossover ending up with `Rock; Alternative; Britpop; House; Dance / Pop` — searchable under every tag, nothing lost.
+
+One exception to merging: when a track is re-tagged from the **same** source that wrote its current genre (e.g. ML re-tagging an ML genre), the new value replaces the old one instead of merging, so repeated runs refresh rather than accumulate.
 
 Regardless of what ends up in `TCON`, the full detected genre string is always also stored in `TXXX:GENRE_DETECTED` for audit. Generic values like `Other`, `Unknown`, `Misc`, `Music`, and empty strings are treated as junk for replacement purposes.
 
@@ -711,7 +717,11 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Track analysis fails** — If a single track fails (corrupt file, unsupported encoding), it is logged to `/tmp/dj-tagger-errors.log` and skipped. The rest of the run continues.
 
-**Re-tagging** — By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything. Use `--fix-comments` to only regenerate comments from existing energy/valence values (no ML re-analysis needed).
+**Re-tagging.** By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything (but see the caution in the flags table: prefer `--upgrade` to backfill new fields, or `--retag-source ml` to re-resolve ML genres). Use `--fix-comments` to only regenerate comments from existing energy/valence values (no ML re-analysis needed).
+
+**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `.venv/bin/python scripts/verify_library.py /path/to/music`. It reads every file (including `.MP3` / `.Mp3`) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
+
+**Serato cue markers.** `scripts/serato_cues.py` reads the cue points Serato stores in each file (the `Serato Markers2` frame), e.g. to compare ENTRY / EXIT markers against detection experiments. `--scan <dir>` summarizes a folder.
 
 ## License
 

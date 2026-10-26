@@ -8,7 +8,7 @@ non-obvious decisions and gotchas.
 
 A local CLI that analyzes MP3s with Essentia TensorFlow models and writes
 ID3 tags: genre (Beatport → Last.fm → ML), energy, valence, moods, and a
-**DJ set role**. Runs unattended over large libraries (~3,500 tracks here).
+**DJ set role**. Runs unattended over large libraries (~3,700 tracks here).
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
@@ -49,9 +49,13 @@ outro). See `classify.classify_role`.
   old "genre replaces global bands" logic.)
 - **Effective energy / heaviness lift ("Fix A").** `decide_role` and
   `compute_arc` band on an *effective* energy = `arc_level` plus a
-  one-directional boost (max +0.15) from structural heaviness (`sub_bass` +
-  `drop_db`), so smooth-but-heavy tracks the mood-energy underrates are not
-  forced into Opener. Never lowers energy; the stored `arc_level` stays raw.
+  one-directional boost from structural heaviness (`sub_bass` + `drop_db`),
+  `HEAVINESS_BOOST * max(0, heaviness - 0.5)`, so the real max lift is ~0.075
+  (not the 0.15 constant). Smooth-but-heavy tracks the mood-energy underrates
+  are not forced into Opener. Never lowers energy; the stored `arc_level`
+  stays raw. The boost applies to the absolute bands only: the genre
+  percentile lookup uses RAW `arc_level`, because `genre_energy.json` is built
+  from raw values (mixing them would compare boosted against raw).
   Partial fix only: genuinely low-energy hypnotic grooves (~0.42) are a
   documented limitation (see the docs/superpowers note).
 - **Single decision point.** The role is decided in `tagger.write_tags` via
@@ -103,17 +107,44 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   so it is stored for a future labeled validation but does NOT affect
   set_role. Full write-up:
   `docs/superpowers/notes/2026-07-27-hypnotic-groove-pulse-regularity.md`.
-  Existing tracks have no PULSE_REG until a re-analysis/backfill.
+  The whole library was backfilled via the v8 bump + `tag --upgrade`.
 - **Honest failures.** If `compute_arc` raises, `analyze_track` logs a
   warning, writes an EMPTY role, and sets `arc_ok=False`. Never fabricate a
   role from neutral values (that silently mislabels and poisons calibration).
+  On a re-tag where the arc fails, `write_tags` keeps the track's existing
+  SET_ROLE rather than blanking it; an empty genre list likewise keeps the
+  existing GENRE_DETECTED.
 - **Legacy roles.** v6 wrote `SET_ROLE="Warm-up"`; v7 renamed it to `Opener`.
   `config.LEGACY_ROLES` maps old→new; applied in `read_tags` and persisted by
   `fix_comments`. Add future renames there.
 - **Version-aware upgrade.** `is_already_tagged` only checks `GENRE_SOURCE`,
   so a plain `tag` skips tagged files regardless of version. Use
   `tag --upgrade` to backfill new fields onto old-version tracks (keeps their
-  resolved genres, no network). `filter_outdated` compares `TAGGER_VERSION`.
+  resolved genres, no network). `filter_outdated` compares `TAGGER_VERSION`,
+  so adding a stored field WITHOUT bumping the version makes `--upgrade` find
+  nothing (this happened with PULSE_REG; v8 fixed it).
+- **Genre resolution rules** (`genres.resolve_metadata`, details in
+  `docs/superpowers/notes/2026-10-26-ml-genre-quality.md`):
+  - The 5-class electronic head (chance = 0.20) may lead the ML genre list
+    only when top >= 0.40 AND it beats the runner-up by >= 0.10. A bare
+    `> 0.20` gate fired on flat heads and prepended "ambient; dnb" noise.
+  - `_merge_genres`: a re-tag from the SAME source replaces that source's own
+    prior genre (ml→ml no longer accumulates). Cross-source still merges.
+  - **Avoid `tag --force` for bulk re-tags.** If a Beatport lookup fails
+    transiently, the ML fallback gets merged into curated Beatport genres.
+    Use `--upgrade` (keeps genres, no network) or `--retag-source ml` (only
+    touches ml-source tracks, and can upgrade them to Beatport).
+- **Verify by reading tags, not run summaries.** `scripts/verify_library.py
+  <lib>` reads every file (case-insensitive `.mp3` via `find_mp3s`) and checks
+  version, role, PULSE_REG, energy, genre source, junk/wide genre, and the
+  `Role:` comment; exit 1 on any issue. A run that reports "0 failed" can
+  still leave stale tags (the ml→ml merge bug was found this way).
+- **Operational notes.** The library is on an external volume that may be
+  unmounted; check `/Volumes/Multimedia` first. Files renamed during a run
+  fail with "No such file" (benign, re-run picks them up). `/tmp` is wiped on
+  reboot, so keep long-run logs in the repo or scratchpad and re-verify from
+  tags. `scripts/serato_cues.py` reads Serato cue markers (ground truth for
+  any future ENTRY/EXIT work).
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet
@@ -141,9 +172,8 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   Discogs-400 labels win. Same-source re-tags replace (not merge) their own
   prior genre. Apply resolver changes with `tag --retag-source ml`.
 - **Verifying "properly tagged":** the resume check only looks for
-  GENRE_SOURCE, so it does not prove completeness. To verify, read every
-  file and check version, role, PULSE_REG, energy, genre and comment. Match
-  `.mp3` case-insensitively (the library has `.MP3` / `.Mp3` files).
+  GENRE_SOURCE, so it does not prove completeness. Run
+  `scripts/verify_library.py` (last run 2026-10-26: 3,690/3,690 OK).
 - **Pending, user-driven:** grading roles by ear, then tune
   `ROLE_THRESHOLDS` / `FEATURE_RANGE` and `rerole`. Parked: hypnotic-groove
   detection and ENTRY/EXIT cue detection (both need more labels; see notes).
