@@ -26,3 +26,16 @@ def test_dominant_electronic_head_leads(monkeypatch):
     elec = [("Techno", 0.55), ("House", 0.10)]
     meta = genres.resolve_metadata("a", "a", "t", disc, ml_electronic_genres=elec)
     assert meta["genres"][0] == "Techno"
+
+
+def test_near_chance_electronic_head_ignored(monkeypatch):
+    # Real case (Faithless - We Come 1, MANNA Remix): the 5-class electronic
+    # head says ambient 0.28 vs dnb 0.20, barely above the 0.20 chance level.
+    # It must not prepend "ambient; dnb" ahead of the coherent trance labels.
+    _no_network(monkeypatch)
+    disc = [("Tech Trance", 0.31), ("Psy-Trance", 0.19), ("Techno", 0.16)]
+    elec = [("ambient", 0.28), ("dnb", 0.20), ("house", 0.19)]
+    meta = genres.resolve_metadata("a", "a", "t", disc, ml_electronic_genres=elec)
+    assert meta["genres"][0] == "Tech Trance"
+    low = [g.lower() for g in meta["genres"]]
+    assert "ambient" not in low and "dnb" not in low

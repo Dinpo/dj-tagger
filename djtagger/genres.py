@@ -466,14 +466,16 @@ def resolve_metadata(
     ml_list = [g[0] for g in ml_genres[:3] if g[1] >= genre_keep_prob]
 
     # Prefer electronic sub-genre labels only when the electronic head is both
-    # confident AND dominant. A flat distribution (top barely above the
-    # runner-up) means the head is uncertain; trusting it there prepends noise
-    # (e.g. "ambient; dnb") ahead of the coherent Discogs-400 labels. Require a
-    # clearly dominant top before letting it lead. Keep only its top 2.
+    # confident AND dominant. That head has just 5 coarse classes (ambient,
+    # dnb, house, techno, trance), so chance is already 0.20 per class: a top
+    # of ~0.27 is barely above a coin flip, and trusting it prepends noise
+    # (e.g. "ambient; dnb") ahead of the finer, coherent Discogs-400 labels.
+    # Require at least twice chance (0.40) AND a clear lead (0.10) over the
+    # runner-up before letting it lead. Keep only its top 2.
     if ml_electronic_genres:
         top = ml_electronic_genres[0][1]
         second = ml_electronic_genres[1][1] if len(ml_electronic_genres) > 1 else 0.0
-        dominant = top >= 0.30 or (top >= 0.20 and top - second >= 0.08)
+        dominant = top >= 0.40 and (top - second) >= 0.10
         if dominant:
             elec_list = [g[0] for g in ml_electronic_genres[:2]
                          if g[1] >= genre_keep_prob]
