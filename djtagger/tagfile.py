@@ -120,7 +120,7 @@ class TagFile:
 
 _ID3_TEXT = {"genre": TCON, "bpm": TBPM, "key": TKEY, "album": TALB, "year": TDRC,
              "artist": TPE1, "title": TIT2}
-_ID3_COMM_DESC = {"comment": "", "detail": "djtagger"}
+_ID3_COMM_FIELDS = ("comment", "detail")
 
 
 class _ID3File(TagFile):
@@ -136,9 +136,25 @@ class _ID3File(TagFile):
         except ID3NoHeaderError:
             return ID3()
 
+    def _comm_key(self, field: str) -> str:
+        """Frame key for a comment field.
+
+        The visible comment is COMM::eng, or failing that any other unnamed
+        COMM frame (some taggers use lang XXX). Named frames such as
+        `ID3v1 Comment` or `iTunNORM` are not the visible comment.
+        """
+        if field == "detail":
+            return "COMM:djtagger:eng"
+        if "COMM::eng" in self.tags:
+            return "COMM::eng"
+        for key, frame in self.tags.items():
+            if key.startswith("COMM:") and frame.desc == "":
+                return key
+        return "COMM::eng"
+
     def get(self, field: str) -> str:
-        if field in _ID3_COMM_DESC:
-            fr = self.tags.get(f"COMM:{_ID3_COMM_DESC[field]}:eng")
+        if field in _ID3_COMM_FIELDS:
+            fr = self.tags.get(self._comm_key(field))
             return str(fr) if fr else ""
         fr = self.tags.get(_ID3_TEXT[field].__name__)
         if fr and fr.text:
@@ -146,9 +162,9 @@ class _ID3File(TagFile):
         return ""
 
     def set(self, field: str, value: str) -> None:
-        if field in _ID3_COMM_DESC:
-            desc = _ID3_COMM_DESC[field]
-            self.tags.delall(f"COMM:{desc}:eng")
+        if field in _ID3_COMM_FIELDS:
+            self.tags.delall(self._comm_key(field))
+            desc = "djtagger" if field == "detail" else ""
             self.tags.add(COMM(encoding=3, lang="eng", desc=desc, text=value))
             return
         frame = _ID3_TEXT[field]
@@ -156,8 +172,8 @@ class _ID3File(TagFile):
         self.tags.add(frame(encoding=3, text=[value]))
 
     def delete(self, field: str) -> None:
-        if field in _ID3_COMM_DESC:
-            self.tags.delall(f"COMM:{_ID3_COMM_DESC[field]}:eng")
+        if field in _ID3_COMM_FIELDS:
+            self.tags.delall(self._comm_key(field))
         else:
             self.tags.delall(_ID3_TEXT[field].__name__)
 

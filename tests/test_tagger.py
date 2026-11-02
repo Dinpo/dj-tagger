@@ -118,7 +118,7 @@ def test_rerole_changes_role_from_stored_tags(tmp_path):
     assert role == "Peak"
     reread = tagger.read_tags(p)
     assert reread["set_role"] == "Peak"
-    assert reread["comment"].startswith("Role: Peak | ")
+    assert reread["comment"] == ""  # comment never opted in, stays untouched
 
 
 def test_rerole_skips_non_v7_file(tmp_path):
@@ -149,7 +149,8 @@ def test_write_tags_keeps_existing_role_on_arc_failure(tmp_path):
     tags.add(TXXX(encoding=3, desc="SET_ROLE", text=["Peak"]))
     tags.save(p)
     ok, _ = tagger.write_tags(
-        p, _full_result(set_role="", arc_ok=False), "ml", ["House"])
+        p, _full_result(set_role="", arc_ok=False), "ml", ["House"],
+        write_comment=True)
     assert ok
     info = tagger.read_tags(p)
     assert info["set_role"] == "Peak"

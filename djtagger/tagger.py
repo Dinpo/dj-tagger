@@ -302,6 +302,45 @@ def _build_comment(
     return comment, detail
 
 
+# Between our summary and the user's own comment text, when both are kept.
+COMMENT_SEPARATOR = " // "
+
+_SUMMARY_RE = re.compile(
+    r"^(?:Role: (?P<role>[\w-]+) \| )?Energy: \w+ \| Mood: \w+"
+    r"(?: \| (?:Dance|Edge|Peak|Intro): [\w.]+)*"
+)
+
+
+def _split_comment(comment: str) -> tuple[bool, str]:
+    """Split a comment into (has our summary, the user's own text)."""
+    m = _SUMMARY_RE.match(comment)
+    if not m:
+        return False, comment
+    rest = comment[m.end():]
+    if rest.startswith(COMMENT_SEPARATOR):
+        return True, rest[len(COMMENT_SEPARATOR):]
+    return True, rest.lstrip(" |")
+
+
+def comment_role(comment: str) -> str | None:
+    """The role shown in a comment: None when it holds no summary of ours."""
+    m = _SUMMARY_RE.match(comment)
+    return (m.group("role") or "") if m else None
+
+
+def _apply_summary(tags: TagFile, summary: str, opted_in: bool) -> None:
+    """Put our summary in the visible comment, keeping the user's own text.
+
+    The comment field is the user's: it is only written when they opted in
+    (`tag --comment`, `tag --fix-comments`), or when it already holds a
+    summary of ours, which must then stay in step with the stored role.
+    """
+    has_summary, own_text = _split_comment(tags.get("comment"))
+    if opted_in or has_summary:
+        tags.set("comment", f"{summary}{COMMENT_SEPARATOR}{own_text}"
+                 if own_text.strip() else summary)
+
+
 def write_tags(
     filepath: str,
     result: dict,
@@ -309,6 +348,7 @@ def write_tags(
     genre_list: list[str],
     album: str = "",
     year: str = "",
+    write_comment: bool = False,
 ) -> tuple[bool, str]:
     """Write analysis results as tags (any supported format).
 
@@ -318,6 +358,8 @@ def write_tags(
     album / year fields respectively, but only if the existing frame is empty or looks like
     junk (URL/promo spam for album; non-year for year). Legitimate existing
     values are preserved.
+
+    *write_comment* opts in to the visible comment (see `_apply_summary`).
     """
     try:
         tags = TagFile.open(filepath)
@@ -426,7 +468,7 @@ def write_tags(
             arc_level=result.get("arc_level", 0.0),
             arc_momentum=result.get("arc_momentum", 0.0),
         )
-        tags.set("comment", comment)
+        _apply_summary(tags, comment, write_comment)
         tags.set("detail", detail)
 
         # BPM — only write if not already set
@@ -522,7 +564,7 @@ def rerole_file(filepath: str) -> tuple[str, str]:
             arc_level=lvl,
             arc_momentum=_custom_float(tags, "ARC_MOMENTUM", 0.0),
         )
-        tags.set("comment", comment)
+        _apply_summary(tags, comment, opted_in=False)
         tags.set("detail", detail)
         tags.save()
         return "reroled", new_role
@@ -572,7 +614,7 @@ def fix_comments(filepath: str) -> str:
             arc_momentum=_custom_float(tags, "ARC_MOMENTUM", 0.0),
         )
 
-        tags.set("comment", comment)
+        _apply_summary(tags, comment, opted_in=True)
         tags.set("detail", detail)
         tags.save()
         return "fixed"

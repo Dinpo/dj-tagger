@@ -363,8 +363,15 @@ def tag(
     dry_run: bool = typer.Option(False, "--dry-run", help="Analyze without writing tags"),
     force: bool = typer.Option(False, "--force", help="Re-tag already tagged files"),
     no_beatport: bool = typer.Option(False, "--no-beatport", help="Skip Beatport lookups"),
+    comment: bool = typer.Option(
+        False, "--comment",
+        help="Also put the set role and summary in the visible comment field, so it "
+             "shows in DJ software. Your own comment text is kept after it",
+    ),
     fix_comments: bool = typer.Option(
-        False, "--fix-comments", help="Update comments on already-tagged files (no re-analysis)"
+        False, "--fix-comments",
+        help="Add or refresh the comment summary on already-tagged files, keeping your "
+             "own comment text (no re-analysis)",
     ),
     detect_bpm_key: bool = typer.Option(
         False, "--detect-bpm-key",
@@ -404,7 +411,7 @@ def tag(
     try:
         _tag_inner(
             path, dry_run, force, no_beatport,
-            fix_comments, detect_bpm_key, retag_source, upgrade,
+            fix_comments, detect_bpm_key, retag_source, upgrade, comment,
         )
     finally:
         _cleanup()
@@ -419,6 +426,7 @@ def _tag_inner(
     detect_bpm_key: bool,
     retag_source: str = "",
     upgrade: bool = False,
+    write_comment: bool = False,
 ) -> None:
     """Inner implementation of tag command, wrapped by try/finally for cleanup."""
     # Lazy imports (heavy — TF models)
@@ -643,7 +651,7 @@ def _tag_inner(
             if not dry_run:
                 ok, genre_action = write_tags(
                     mp3, result, genre_source, final_genres,
-                    album=album, year=year,
+                    album=album, year=year, write_comment=write_comment,
                 )
                 if ok:
                     _log(f"  ✅ Tagged (TCON: {genre_action})")

@@ -5,6 +5,7 @@ import shutil
 
 import mutagen
 import pytest
+from mutagen.id3 import COMM, ID3
 from mutagen.mp4 import MP4
 
 from djtagger import tagger
@@ -44,7 +45,7 @@ def test_write_then_read_round_trip(tmp_path, ext):
     assert not tagger.is_already_tagged(p)
 
     ok, _ = tagger.write_tags(p, _result(), "ml", ["Techno", "Peak Time"],
-                              album="Some Album", year="2021")
+                              album="Some Album", year="2021", write_comment=True)
     assert ok
 
     info = tagger.read_tags(p)
@@ -130,7 +131,7 @@ def test_flac_description_mirror_follows_comment_only_when_mirrored(tmp_path):
     f.save()
 
     for p in (mirrored, own):
-        tagger.write_tags(p, _result(), "ml", ["House"])
+        tagger.write_tags(p, _result(), "ml", ["House"], write_comment=True)
 
     assert mutagen.File(mirrored).tags["description"][0].startswith("Role: Peak")
     assert mutagen.File(own).tags["description"] == ["my own notes"]
@@ -138,7 +139,7 @@ def test_flac_description_mirror_follows_comment_only_when_mirrored(tmp_path):
 
 def test_m4a_uses_standard_atoms(tmp_path):
     p = _copy(tmp_path, "m4a")
-    tagger.write_tags(p, _result(bpm=128.4, key="8A"), "ml", ["House"])
+    tagger.write_tags(p, _result(bpm=128.4, key="8A"), "ml", ["House"], write_comment=True)
 
     m = MP4(p)
     assert m.tags["\xa9gen"] == ["House"]
@@ -233,3 +234,98 @@ def test_parse_filename_keeps_numeric_artist_when_tags_agree(tmp_path):
     assert tagger.parse_filename(p)[0] == "1991"
     bare = _copy(tmp_path, "wav", "999 - Find the Answer")  # no tags at all
     assert tagger.parse_filename(bare)[:1] == ("999",)
+
+
+def _with_comment(tmp_path, ext, text):
+    p = _copy(tmp_path, ext)
+    t = TagFile.open(p)
+    t.set("comment", text)
+    t.save()
+    return p
+
+
+@pytest.mark.parametrize("ext", FORMATS)
+def test_comment_untouched_without_the_flag(tmp_path, ext):
+    p = _with_comment(tmp_path, ext, "my own notes")
+    assert tagger.write_tags(p, _result(), "ml", ["House"])[0]
+    info = tagger.read_tags(p)
+    assert info["comment"] == "my own notes"
+    assert info["set_role"] == "Peak"  # the role is still stored
+    assert info["comment_detail"].startswith("E:0.9 | ")
+
+
+@pytest.mark.parametrize("ext", FORMATS)
+def test_comment_flag_keeps_own_text_and_does_not_stack(tmp_path, ext):
+    p = _with_comment(tmp_path, ext, "10A - Energy 7")
+    tagger.write_tags(p, _result(), "ml", ["House"], write_comment=True)
+    first = tagger.read_tags(p)["comment"]
+    assert first.startswith("Role: Peak | ")
+    assert first.endswith(" // 10A - Energy 7")
+
+    # Re-tag, fix-comments and a role change all replace only our part.
+    tagger.write_tags(p, _result(energy=0.3), "ml", ["House"], write_comment=True)
+    tagger.fix_comments(p)
+    t = TagFile.open(p)
+    t.set_custom("SET_ROLE", "Closer")
+    t.save()
+    tagger.rerole_file(p)
+    final = tagger.read_tags(p)["comment"]
+    assert final.count("Role:") == 1
+    assert final.count("10A - Energy 7") == 1
+    assert final.startswith("Role: Peak | ")
+
+
+def test_existing_summary_stays_current_without_the_flag(tmp_path):
+    # Tagged with --comment earlier: later runs must not leave a stale role.
+    p = _with_comment(tmp_path, "flac", "Role: Opener | Energy: Low | Mood: Dark | "
+                                        "Edge: Soft | Peak: 0.40 | Intro: Quiet // note")
+    tagger.write_tags(p, _result(), "ml", ["House"])
+    comment = tagger.read_tags(p)["comment"]
+    assert comment.startswith("Role: Peak | ")
+    assert comment.endswith(" // note")
+
+
+def test_rerole_leaves_a_users_comment_alone(tmp_path):
+    p = _with_comment(tmp_path, "m4a", "my own notes")
+    tagger.write_tags(p, _result(), "ml", ["House"])
+    t = TagFile.open(p)
+    t.set_custom("SET_ROLE", "Closer")
+    t.save()
+    assert tagger.rerole_file(p) == ("reroled", "Peak")
+    assert tagger.read_tags(p)["comment"] == "my own notes"
+
+
+def test_text_that_only_mentions_a_role_is_the_users(tmp_path):
+    assert tagger.comment_role("Role: played at my wedding") is None
+    p = _with_comment(tmp_path, "aif", "Role: played at my wedding")
+    tagger.write_tags(p, _result(), "ml", ["House"], write_comment=True)
+    assert tagger.read_tags(p)["comment"].endswith(" // Role: played at my wedding")
+
+
+def test_comment_in_another_language_frame_is_preserved(tmp_path):
+    p = str(tmp_path / "x.mp3")
+    tags = ID3()
+    tags.add(COMM(encoding=3, lang="XXX", desc="", text="3A - Energy 6"))
+    tags.add(COMM(encoding=3, lang="eng", desc="ID3v1 Comment", text="old"))
+    tags.save(p)
+    assert tagger.read_tags(p)["comment"] == "3A - Energy 6"
+
+    tagger.write_tags(p, _result(), "ml", ["House"], write_comment=True)
+
+    reread = ID3(p)
+    assert str(reread["COMM::eng"]).endswith(" // 3A - Energy 6")
+    assert "COMM::XXX" not in reread  # merged, not left as a duplicate
+    assert str(reread["COMM:ID3v1 Comment:eng"]) == "old"
+
+
+def test_verify_accepts_no_comment_but_flags_a_stale_one(tmp_path):
+    from djtagger.verify import track_issues
+
+    p = _copy(tmp_path, "flac")
+    tagger.write_tags(p, _result(), "ml", ["House"])
+    assert track_issues(tagger.read_tags(p), p) == []
+
+    t = TagFile.open(p)
+    t.set("comment", "Role: Opener | Energy: Low | Mood: Dark")
+    t.save()
+    assert "comment shows an outdated role" in track_issues(tagger.read_tags(p), p)

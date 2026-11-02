@@ -10,8 +10,8 @@ when any track has issues).
 
 Checks per track: current TAGGER_VERSION, a valid set role, PULSE_REG and
 ENERGY present, GENRE_SOURCE present, a non-junk genre, no wide ML genre mix
-(4+ genres from source "ml"), a Serato comment that leads with "Role:", and
-a header that reports a real duration. Some exported FLACs carry a zero
+(4+ genres from source "ml"), a visible comment that (when it holds our
+summary) shows the current role, and a header that reports a real duration. Some exported FLACs carry a zero
 sample count; the audio is fine, but after a tag write DJ software re-reads
 the header and loads a 0-second track. Re-encode losslessly to fix it.
 Files are found with the tagger's own scanner: every supported format
@@ -25,7 +25,7 @@ import mutagen
 
 from .config import TAGGER_VERSION, is_junk_genre
 from .scanner import find_audio_files
-from .tagger import read_tags
+from .tagger import comment_role, read_tags
 
 ROLES = {"Opener", "Builder", "Peak", "Closer"}
 
@@ -57,8 +57,11 @@ def track_issues(t: dict, path: str = "") -> list[str]:
     parts = [g.strip() for g in genre.split(";") if g.strip()]
     if t["genre_source"] == "ml" and len(parts) >= 4:
         issues.append("wide ml genre")
-    if t["set_role"] and not t["comment"].startswith("Role:"):
-        issues.append("comment missing role")
+    # The comment is opt-in, so a track without our summary is fine; one that
+    # shows a role must show the current one.
+    shown = comment_role(t["comment"])
+    if shown is not None and shown != t["set_role"]:
+        issues.append("comment shows an outdated role")
     return issues
 
 

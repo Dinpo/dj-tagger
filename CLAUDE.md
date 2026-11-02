@@ -12,7 +12,7 @@ Essentia TensorFlow models and writes tags: genre (Beatport → Last.fm → ML),
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 100, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 115, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
   auto-memory). Filenames follow `Artist - Title.<ext>`.
@@ -140,7 +140,8 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
 - **Verify by reading tags, not run summaries.** `djtagger verify <lib>`
   reads every audio file (all formats, via `find_audio_files`) and checks
   version, role, PULSE_REG, energy, genre source, junk/wide genre, the
-  `Role:` comment and a non-zero header length; exit 1 on any issue. A run that reports "0 failed" can
+  comment role (when one is shown) and a non-zero header length; exit 1 on any
+  issue. A run that reports "0 failed" can
   still leave stale tags (the ml→ml merge bug was found this way).
 - **Operational notes.** The library is on an external volume that may be
   unmounted; check `/Volumes/Multimedia` first. Files renamed during a run
@@ -201,6 +202,19 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   (it used to be `.`, which made a bare `djtagger tag` tag wherever you
   stood). Testing the wizard needs a real pty: macOS `script` sends EOF
   before the first prompt; drive it with a Python `pty.fork` loop.
+- **The visible comment is opt-in (user decision, 2026-11-02).** `tag` does
+  not touch it without `--comment`; `--fix-comments` is also an explicit
+  opt-in. `tagger._apply_summary` is the only writer: it puts our summary
+  first and keeps the user's text after ` // `, replacing only our part on
+  later runs (`_split_comment`, `_SUMMARY_RE`), so a comment that merely
+  starts with "Role:" stays the user's. A comment that already holds a
+  summary is always refreshed, flag or not, so `rerole` can't leave a stale
+  role. The hidden detail (`COMM:djtagger:eng` / `DJTAGGER_DETAIL`) is ours
+  and always written. ID3: the visible comment is `COMM::eng`, else any
+  unnamed COMM (3 library files use lang XXX); named frames are not it.
+  `COMM:ID3v1 Comment:eng` still holds the original text (e.g.
+  `6B - Energy 6`) on ~3,500 MP3s, should it ever be wanted back.
+  For this library: tag new tracks with `djtagger tag <lib> --comment`.
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet
@@ -221,7 +235,9 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   All work committed and pushed to `origin/main`.
 - **Library fully tagged:** all 3,723 tracks in `_DJ Music` (3,690 MP3 +
   33 FLAC/M4A/AIFF/WAV, tagged 2026-11-02) are at v8 with a
-  valid role, PULSE_REG, energy, a non-junk genre, and a `Role:` comment.
+  valid role, PULSE_REG, energy, a non-junk genre, and a `Role:` comment
+  (comments were written before `--comment` became opt-in; new tracks need
+  the flag, see below).
   Distribution roughly Opener 21% / Builder 20% / Peak 33% / Closer 25%.
 - **ML-genre quality: fixed and applied.** The 5-class electronic genre head
   (ambient/dnb/house/techno/trance, chance = 0.20) may only lead when

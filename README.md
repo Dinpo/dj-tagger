@@ -22,6 +22,7 @@ uv tool install git+https://github.com/Dinpo/dj-tagger
 ```bash
 djtagger tag "/path/to/music" --dry-run    # analyze, change nothing
 djtagger tag "/path/to/music"              # analyze and write tags
+djtagger tag "/path/to/music" --comment    # also show the role in your DJ software
 djtagger verify                            # check every track came out complete
 ```
 
@@ -35,7 +36,7 @@ Everything is written into the files' own tags; there is no separate database. P
 
 | Field | What happens |
 |-------|--------------|
-| **Comment** | **Replaced** with a summary that starts with the set role, e.g. `Role: Builder \| Energy: Mid \| Mood: Neutral \| ...`. Any comment you had in that field (for example Mixed In Key's `8A - Energy 6`) is overwritten. This is the field Serato and rekordbox show in their comment column. |
+| **Comment** | **Left alone unless you pass `--comment`.** With it, a summary starting with the set role goes first and your own text is kept after it: `Role: Builder \| Energy: Mid \| ... // 10A - Energy 7`. This is the field Serato and rekordbox show in their comment column, so it is how you see the role while playing. |
 | **Genre** | Filled when empty. An existing genre is kept, made more specific (`House` → `Deep House`), or extended with the new genres (capped at 5); junk values (URLs, promo spam) are replaced. See [Genre Resolution Rules](#genre-resolution-rules). |
 | **Album / year** | Filled from the Beatport match **only when empty or junk** (URL spam, a non-year). A real album or year is never overwritten. |
 | **BPM / key** | Left alone. Written only with `--detect-bpm-key`, and only when the field is empty. |
@@ -93,7 +94,7 @@ A file whose header reports zero length is refused rather than tagged (see [Trou
 - **3-tier genre resolution** — Beatport → Last.fm → Essentia ML fallback
 - **Album + year** — filled from Beatport; empty / junk values (URL spam, non-year) are replaced, legit values preserved
 - **Remix-aware matching** — Scores Beatport results to find the right version
-- **Careful with your data:** preserves Serato cues, rekordbox and Mixed In Key data, BPM, key, artwork and real album/year values; existing genres are kept or extended. The visible comment is replaced (see [What DJ Tagger Changes](#what-dj-tagger-changes-in-your-files))
+- **Careful with your data:** preserves Serato cues, rekordbox and Mixed In Key data, BPM, key, artwork and real album/year values; existing genres are kept or extended. The visible comment is only written with `--comment`, and your text stays (see [What DJ Tagger Changes](#what-dj-tagger-changes-in-your-files))
 - **Rich CLI** — Live progress, stats dashboard, and color-coded output via [Rich](https://rich.readthedocs.io/)
 - **Resume support:** skips already-tagged files automatically (checks for our `GENRE_SOURCE` tag)
 - **Offline capable** — ML analysis is fully local; genre labels are cached after first network fetch
@@ -189,7 +190,10 @@ djtagger tag /path/to/music --force
 # Skip Beatport lookups (Last.fm + ML-only genres)
 djtagger tag /path/to/music --no-beatport
 
-# Fix comments on already-tagged files (no re-analysis)
+# Show the set role in the comment field, keeping your own comment text
+djtagger tag /path/to/music --comment
+
+# Add or refresh that comment on already-tagged files (no re-analysis)
 djtagger tag /path/to/music --fix-comments
 
 # Upgrade older-version tracks to the current tagger (keeps their genres)
@@ -206,7 +210,8 @@ djtagger tag /path/to/music --retag-source ml
 | `--retag-source SRC` | Re-tag only files whose `GENRE_SOURCE` equals `SRC` (`ml`, `lastfm+ml`, `beatport`). Use after changing genre resolution; ML-only tracks can be upgraded to a Beatport match |
 | `--no-beatport` | Skip Beatport scraping; use Last.fm + ML only |
 | `--detect-bpm-key` | Also detect BPM and key (off by default — DJ software usually owns these) |
-| `--fix-comments` | Regenerate `COMM` tags from existing energy/valence values (no ML re-analysis) |
+| `--comment` | Also write the set role and summary to the visible comment field, so it shows in DJ software. Your own comment text is kept after ` // `. Off by default: without it the comment field is not touched |
+| `--fix-comments` | Add or refresh that summary on already-tagged files from their stored values, keeping your own text (no ML re-analysis). Use this to turn the comment on later without re-tagging |
 | `--upgrade` | Re-analyze files tagged by an older tagger version; keeps their resolved genres (no network lookups needed) |
 
 If no path is given, it defaults to the current directory (or `DJTAGGER_MUSIC_PATH`).
@@ -344,7 +349,7 @@ djtagger genre-stats /path/to/music
 
 # Re-decide every track's role from its already-stored tags (no audio, no
 # ML). Applies the current ROLE_THRESHOLDS / FEATURE_RANGE and the
-# genre-relative bands, rewriting SET_ROLE and the comment in seconds.
+# genre-relative bands, rewriting SET_ROLE (and the comment, if it shows a role) in seconds.
 djtagger rerole /path/to/music
 ```
 
@@ -468,7 +473,7 @@ valence = clamp((happy - sad + 1) / 2, 0, 1)
 
 ### Set Role
 
-Each track is classified into one of four DJ set roles and written as the first field of the visible comment:
+Each track is classified into one of four DJ set roles, stored in the `SET_ROLE` tag, and with `--comment` also shown as the first field of the visible comment:
 
 - **Opener** (energy 3-5): hypnotic, deep, atmospheric; low activity, no heavy drops.
 - **Builder** (energy 6-7): driving, urgent, rising; promises something bigger is coming.
@@ -574,7 +579,7 @@ Outside ID3 our analysis fields carry a `DJTAGGER_` prefix. Vorbis field names a
 | Drive index | `TXXX:DRIVE` | Score 0-1 | Builder character: flux + onsets + rising loudness |
 | Emo index | `TXXX:EMO` | Score 0-1 | Closer character: valence + brightness + vocals + fade |
 | Tagger version | `TXXX:TAGGER_VERSION` | e.g. `v8` | For tracking re-tag needs |
-| Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Human-readable, visible in Serato/rekordbox |
+| Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Only with `--comment` / `--fix-comments`; visible in Serato/rekordbox; your own text is kept after ` // ` |
 | Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
 All other existing tags (BPM, key, Serato cues and analysis, Mixed In Key data, artwork, etc.) are left untouched, in every format.
@@ -600,6 +605,8 @@ Regardless of what ends up in `TCON`, the full detected genre string is always a
 
 ### Comment Format
 
+Written only when you ask for it with `--comment` (or `--fix-comments`). Any text already in the comment is kept after ` // `, and later runs replace only DJ Tagger's part, so nothing stacks up. Once a track shows a summary, every later run keeps it in step with the stored role, so it can't go stale; `rerole` and `tag` leave any comment without a summary alone.
+
 The human-readable comment (`COMM::eng`) leads with the set role (see [Set Role](#set-role)), followed by these labels:
 
 | Metric | Range | Label |
@@ -623,7 +630,7 @@ Peak energy is shown as a raw number (e.g., `Peak: 0.98`) for precision.
 
 Danceability is no longer part of the visible comment (it's near-constant across this library, so it carries little signal there), but it is still computed and written to the `DANCEABILITY` tag.
 
-Example: `Role: Builder | Energy: Mid | Mood: Neutral | Edge: Soft | Peak: 0.95 | Intro: Mid`
+Example: `Role: Builder | Energy: Mid | Mood: Neutral | Edge: Soft | Peak: 0.95 | Intro: Mid // 10A - Energy 7`
 
 ## Configuration
 
@@ -770,9 +777,9 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Track analysis fails** — If a single track fails (corrupt file, unsupported encoding), it is logged to `/tmp/dj-tagger-errors.log` and skipped. The rest of the run continues.
 
-**Re-tagging.** By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything (but see the caution in the flags table: prefer `--upgrade` to backfill new fields, or `--retag-source ml` to re-resolve ML genres). Use `--fix-comments` to only regenerate comments from existing energy/valence values (no ML re-analysis needed).
+**Re-tagging.** By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything (but see the caution in the flags table: prefer `--upgrade` to backfill new fields, or `--retag-source ml` to re-resolve ML genres). Use `--fix-comments` to add or refresh the comment summary from stored values (no ML re-analysis needed).
 
-**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `djtagger verify /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
+**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `djtagger verify /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment showing an outdated role. It exits 1 if any track has an issue.
 
 **A track loads as 0 seconds after tagging.** Some FLAC exports (typically from FFmpeg-based tools) leave the sample count in the header at zero. The audio itself is intact, and players that had the length cached keep working, but once a tag write changes the file, DJ software re-reads the header and shows a 0-second track. DJ Tagger never touches the header or the audio, and it now **refuses to write tags** to such a file (reported as a failed track with "header reports 0 length"), so tagging cannot trigger the problem; `djtagger verify` also flags these files. Fix one by re-encoding it losslessly (e.g. `ffmpeg -i in.flac -c:a flac out.flac`) and copying the tags back; FLAC is lossless, so the decoded audio stays bit-identical.
 
