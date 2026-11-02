@@ -736,6 +736,8 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `.venv/bin/python scripts/verify_library.py /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
 
+**A track loads as 0 seconds after tagging.** Some FLAC exports (typically from FFmpeg-based tools) leave the sample count in the header at zero. The audio itself is intact, and players that had the length cached keep working, but once a tag write changes the file, DJ software re-reads the header and shows a 0-second track. DJ Tagger never touches the header or the audio; `scripts/verify_library.py` flags such files as "header reports 0 length". Fix one by re-encoding it losslessly (e.g. `ffmpeg -i in.flac -c:a flac out.flac`) and copying the tags back; FLAC is lossless, so the decoded audio stays bit-identical.
+
 **Serato cue markers.** `scripts/serato_cues.py` reads the cue points Serato stores in each file (the `Serato Markers2` frame), e.g. to compare ENTRY / EXIT markers against detection experiments. `--scan <dir>` summarizes a folder.
 
 ## License

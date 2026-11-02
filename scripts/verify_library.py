@@ -12,7 +12,10 @@ Exit code 0 when every track passes, 1 when any track has issues.
 
 Checks per track: current TAGGER_VERSION, a valid set role, PULSE_REG and
 ENERGY present, GENRE_SOURCE present, a non-junk genre, no wide ML genre mix
-(4+ genres from source "ml"), and a Serato comment that leads with "Role:".
+(4+ genres from source "ml"), a Serato comment that leads with "Role:", and
+a header that reports a real duration. Some exported FLACs carry a zero
+sample count; the audio is fine, but after a tag write DJ software re-reads
+the header and loads a 0-second track. Re-encode losslessly to fix it.
 Files are found with the tagger's own scanner: every supported format
 (MP3, FLAC, M4A, AIFF, WAV, Ogg), extensions matched case-insensitively.
 """
@@ -21,6 +24,8 @@ import os
 import sys
 from collections import Counter
 
+import mutagen
+
 from djtagger.config import TAGGER_VERSION, is_junk_genre
 from djtagger.scanner import find_audio_files
 from djtagger.tagger import read_tags
@@ -28,8 +33,15 @@ from djtagger.tagger import read_tags
 ROLES = {"Opener", "Builder", "Peak", "Closer"}
 
 
-def track_issues(t: dict) -> list[str]:
+def track_issues(t: dict, path: str = "") -> list[str]:
     issues = []
+    if path:
+        try:
+            audio = mutagen.File(path)
+            if audio is not None and not audio.info.length:
+                issues.append("header reports 0 length")
+        except Exception:
+            issues.append("unreadable audio header")
     if t["tagger_version"] != TAGGER_VERSION:
         issues.append(f"version={t['tagger_version'] or 'none'}")
     if t["set_role"] not in ROLES:
@@ -63,7 +75,7 @@ def main() -> int:
     examples: dict[str, list[str]] = {}
     ok = 0
     for f in files:
-        issues = track_issues(read_tags(f))
+        issues = track_issues(read_tags(f), f)
         if not issues:
             ok += 1
             continue
