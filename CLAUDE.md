@@ -166,6 +166,12 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
     (generated with ffmpeg; Ogg via `-c:a vorbis -strict -2`).
   - Essentia `MonoLoader` decodes every format via FFmpeg; no analyzer
     change was needed.
+  - **Zero-length header guard.** `TagFile.save()` (non-MP3 backends) raises
+    `BrokenHeaderError` when the header reports 0 length. Found on a real
+    FFmpeg-exported FLAC (total_samples=0): audio intact, but after our tag
+    write Serato re-read the header and loaded a 0-second track. Repair is a
+    lossless re-encode + tag copy (verify decoded PCM identical). Tag writes
+    were verified to leave decoded audio bit-identical in all 5 formats.
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet

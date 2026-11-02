@@ -49,6 +49,25 @@ def is_audio_file(path: str) -> bool:
     return path.lower().endswith(AUDIO_EXTS)
 
 
+class BrokenHeaderError(Exception):
+    """The file's header reports zero length, so writing tags is refused.
+
+    Some exports (typically FFmpeg-based) leave the FLAC sample count at
+    zero. The audio is intact and players with a cached length keep working,
+    but once a tag write changes the file, DJ software re-reads the header
+    and loads a 0-second track. Fix by re-encoding losslessly
+    (`ffmpeg -i in.flac -c:a flac out.flac`) and copying the tags back.
+    """
+
+
+def _check_header(audio, path: str) -> None:
+    if not audio.info.length:
+        raise BrokenHeaderError(
+            f"header reports 0 length, not writing tags (re-encode losslessly "
+            f"to repair, see README Troubleshooting): {os.path.basename(path)}"
+        )
+
+
 class TagFile:
     """One file's tags. Open with `TagFile.open(path)`; call `save()` to write."""
 
@@ -169,6 +188,7 @@ class _ContainerID3File(_ID3File):
         return self.audio.tags
 
     def save(self) -> None:
+        _check_header(self.audio, self.path)
         self.audio.save(v2_version=self._v2)
 
 
@@ -229,6 +249,7 @@ class _VorbisFile(TagFile):
         self._delete(CUSTOM_PREFIX + name)
 
     def save(self) -> None:
+        _check_header(self.audio, self.path)
         self.audio.save()
 
 
@@ -310,4 +331,5 @@ class _MP4File(TagFile):
         self._delete_ff(CUSTOM_PREFIX + name)
 
     def save(self) -> None:
+        _check_header(self.audio, self.path)
         self.audio.save()

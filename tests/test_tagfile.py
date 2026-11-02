@@ -187,3 +187,19 @@ def test_unsupported_extension_is_rejected(tmp_path):
         TagFile.open(str(p))
     assert tagger.read_tags(str(p))["genre"] == ""
     assert tagger.write_tags(str(p), _result(), "ml", ["House"])[0] is False
+
+
+def test_zero_length_header_is_refused_and_file_untouched(tmp_path):
+    # FFmpeg-style export with total_samples=0: tagging it would make DJ
+    # software re-read the header and load a 0-second track, so refuse.
+    p = _copy(tmp_path, "flac")
+    f = mutagen.File(p)
+    f.info.total_samples = 0
+    f.save()
+    before = open(p, "rb").read()
+
+    ok, msg = tagger.write_tags(p, _result(), "ml", ["House"])
+    assert ok is False
+    assert "0 length" in msg
+    assert tagger.fix_comments(p) == "skipped"  # never tagged by us
+    assert open(p, "rb").read() == before
