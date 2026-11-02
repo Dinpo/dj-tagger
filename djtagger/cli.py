@@ -197,44 +197,151 @@ def _make_summary_table(
 # ═════════════════════════════════════════════════════════════
 
 
-@app.command()
-def setup(
-    force: bool = typer.Option(False, "--force", help="Re-download files that are already present"),
-) -> None:
-    """Download the ML models DJ Tagger needs (run once after installing)."""
-    from .config import MODEL_DIR
+def _music_path(path: str) -> str:
+    """The folder a command acts on: the argument, else the saved music folder.
+
+    Re-reads the config so a folder saved by a first-run setup in this same
+    process is picked up. Never falls back to the current directory.
+    """
+    if path:
+        return path
+    from .config import load_user_config
+
+    saved = os.environ.get("DJTAGGER_MUSIC_PATH") or load_user_config().get("music_path", "")
+    if saved:
+        console.print(f"[dim]Using your music folder: {saved}[/dim]")
+        return saved
+    console.print(
+        "\n[bold red]Error:[/bold red] no folder given. Name one, e.g. "
+        "[bold]djtagger tag /path/to/music[/bold], or save your library folder "
+        "with [bold]djtagger setup[/bold].\n"
+    )
+    raise typer.Exit(1)
+
+
+def _clean_path_answer(ans: str) -> str:
+    """Normalize a folder typed or dragged into the terminal ('~', quotes, '\\ ')."""
+    ans = ans.strip()
+    if len(ans) >= 2 and ans[0] == ans[-1] and ans[0] in "'\"":
+        ans = ans[1:-1]
+    return os.path.expanduser(ans.replace("\\ ", " ")).rstrip("/") or ans
+
+
+def _run_setup_wizard(force: bool = False, ask: bool = True) -> bool:
+    """Download models, then (if *ask*) offer the optional settings.
+
+    Shared by `djtagger setup` and the first run of a command that needs the
+    models. Answers are saved to the user config file, so nothing has to be
+    exported as an environment variable. Returns False if a required model
+    could not be downloaded.
+    """
+    from . import config
     from .models import download_all, missing_models
 
-    console.print(f"\n[bold cyan]⬇  Downloading models[/bold cyan] to [dim]{MODEL_DIR}[/dim]")
-    console.print("[dim](about 30 MB; set DJTAGGER_MODEL_DIR to use another folder)[/dim]\n")
+    console.print(f"\n[bold cyan]1. ML models[/bold cyan] [dim]→ {config.MODEL_DIR}[/dim]")
+    console.print("[dim]   about 30 MB, downloaded once[/dim]")
 
     def show(name: str, status: str) -> None:
         mark = {"downloaded": "[green]✓[/green]", "present": "[dim]·[/dim]"}.get(status, "[red]✗[/red]")
-        console.print(f"  {mark} {name} [dim]{status}[/dim]")
+        console.print(f"   {mark} {name} [dim]{status}[/dim]")
 
     download_all(force=force, on_item=show)
-
     missing_required = missing_models(required_only=True)
     if missing_required:
         console.print(
             f"\n[bold red]Setup incomplete:[/bold red] required models still missing: "
-            f"{', '.join(missing_required)}. Check your network and run `djtagger setup` again."
+            f"{', '.join(missing_required)}. Check your network and run `djtagger setup` again.\n"
         )
-        raise typer.Exit(1)
+        return False
+
+    saved: dict = {}
+    if ask:
+        user = config.load_user_config()
+
+        # 2. Default music folder, so `djtagger tag` works without a path.
+        if not os.environ.get("DJTAGGER_MUSIC_PATH"):
+            current = user.get("music_path", "")
+            console.print("\n[bold cyan]2. Your music folder[/bold cyan] [dim](optional)[/dim]")
+            console.print("[dim]   Used when you run a command without a folder. "
+                          "Tip: drag the folder into this window.[/dim]")
+            ans = typer.prompt("   Folder (Enter to skip)", default=current, show_default=bool(current))
+            folder = _clean_path_answer(ans) if ans else ""
+            if folder and os.path.isdir(folder):
+                saved["music_path"] = folder
+            elif folder:
+                console.print(f"   [yellow]Not a folder, skipped:[/yellow] {folder}")
+
+        # 3. Last.fm key: better genres for tracks Beatport does not know.
+        if not os.environ.get("LASTFM_API_KEY"):
+            has_key = bool(user.get("lastfm_api_key"))
+            console.print("\n[bold cyan]3. Last.fm API key[/bold cyan] [dim](optional)[/dim]")
+            console.print("[dim]   Improves genres for tracks Beatport does not have. Free key: "
+                          "https://www.last.fm/api/account/create[/dim]")
+            prompt = "   Key (Enter to keep the saved one)" if has_key else "   Key (Enter to skip)"
+            key = typer.prompt(prompt, default="", show_default=False).strip()
+            if key:
+                saved["lastfm_api_key"] = key
+                config.LASTFM_API_KEY = key
+                from . import genres
+                genres.LASTFM_API_KEY = key  # take effect in this run too
+
+    saved["setup_done"] = True
+    config.save_user_config(saved)
+    if ask:
+        console.print(f"\n[dim]Settings saved to {config.CONFIG_FILE}[/dim]")
     missing_optional = missing_models()
     if missing_optional:
         console.print(
-            f"\n[yellow]Optional models missing[/yellow] ({', '.join(missing_optional)}): "
+            f"[yellow]Optional models missing[/yellow] ({', '.join(missing_optional)}): "
             f"tagging works, with fallbacks for those features."
         )
-    console.print("\n[bold green]Ready.[/bold green] Next: [bold]djtagger tag /path/to/music --dry-run[/bold]\n")
+    console.print("[bold green]✓ Setup complete.[/bold green]\n")
+    return True
+
+
+@app.command()
+def setup(
+    force: bool = typer.Option(False, "--force", help="Re-download model files that are already present"),
+) -> None:
+    """Download the ML models and set your music folder / Last.fm key (safe to re-run)."""
+    if not _run_setup_wizard(force=force, ask=sys.stdin.isatty()):
+        raise typer.Exit(1)
+    console.print("Next: [bold]djtagger tag --dry-run[/bold] (or give a folder) to try it without writing.\n")
+
+
+def _ensure_models() -> None:
+    """First-run helper: if required models are missing, offer to set up now.
+
+    Interactive terminals get the setup wizard and the command then carries
+    on; scripts and pipes get a clear error instead of a prompt.
+    """
+    from .models import missing_models
+
+    if not missing_models(required_only=True):
+        return
+    if not sys.stdin.isatty():
+        console.print(
+            "\n[bold red]Error:[/bold red] DJ Tagger's ML models are not downloaded yet. "
+            "Run [bold]djtagger setup[/bold] once, then try again.\n"
+        )
+        raise typer.Exit(1)
+    console.print(
+        "\n[bold]Welcome to DJ Tagger![/bold] Before the first run it needs to download "
+        "its ML models (about 30 MB, one time)."
+    )
+    if not typer.confirm("Set up now?", default=True):
+        console.print("OK. Run [bold]djtagger setup[/bold] whenever you are ready.\n")
+        raise typer.Exit(1)
+    if not _run_setup_wizard(ask=True):
+        raise typer.Exit(1)
 
 
 def _load_models_or_exit():
-    """Load the ML models, or exit with a fix-it message if required ones are missing."""
+    """Load the ML models, offering first-run setup if they are missing."""
     from .analyzer import load_models
     from .models import ModelsMissingError
 
+    _ensure_models()
     try:
         return load_models()
     except ModelsMissingError as ex:
@@ -283,6 +390,9 @@ def tag(
     # Set socket timeout
     socket.setdefaulttimeout(10)
 
+    if not fix_comments:
+        _ensure_models()  # first run: offer setup (models, music folder) before scanning
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -751,6 +861,7 @@ def stats(
 
     from .library import scan_library
 
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -1040,6 +1151,7 @@ def find(
     limit: int = typer.Option(50, "--limit", "-n", help="Max results to show (0 = all)"),
 ) -> None:
     """Search and filter your tagged library."""
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -1162,6 +1274,7 @@ def export(
     fmt: str = typer.Option("csv", "--format", "-f", help="Output format: csv or json"),
 ) -> None:
     """Export library data to CSV or JSON (writes to stdout)."""
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found", err=True)
         raise typer.Exit(1)
@@ -1252,6 +1365,7 @@ def genre_stats(
     from .classify import primary_genre
     from .config import GENRE_STATS_FILE, ROLE_THRESHOLDS
 
+    path = _music_path(path)
     tracks = _scan_with_progress(path)
     by_genre: dict[str, list[float]] = {}
     for t in tracks:
@@ -1317,6 +1431,7 @@ def rerole(
     from .scanner import find_audio_files
     from .tagger import rerole_file
 
+    path = _music_path(path)
     mp3s = find_audio_files(path)
     console.print(f"\n[bold cyan]🎚  Re-deciding roles[/bold cyan] on "
                   f"[bold]{len(mp3s)}[/bold] files\n")
@@ -1387,6 +1502,7 @@ def suggest(
     count: int = typer.Option(15, "--count", "-n", help="Number of suggestions"),
 ) -> None:
     """Suggest tracks for set building — find similar tracks or build energy curves."""
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -1595,6 +1711,7 @@ def health(
     """Check collection health — find weak spots, missing data, and quality issues."""
     from collections import Counter
 
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -1799,6 +1916,7 @@ def clean_genres(
     from .tagger import clean_junk_genre, read_tags
     from .config import is_junk_genre
 
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -2036,6 +2154,7 @@ def convert_keys(
     from .scanner import find_audio_files
     from .tagfile import TagFile
 
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -2139,6 +2258,7 @@ def bench_bpm(
     from .tagger import parse_filename
     from .config import CAMELOT_MAP
 
+    path = _music_path(path)
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
         raise typer.Exit(1)
@@ -2431,6 +2551,38 @@ def bench_bpm(
     if errors:
         console.print(f"\n[dim]{errors} tracks failed to analyze[/dim]")
     console.print()
+
+
+# ═════════════════════════════════════════════════════════════
+#  VERIFY command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def verify(
+    path: str = typer.Argument(DEFAULT_MUSIC_PATH, help="Folder to check (recursive)"),
+) -> None:
+    """Check every track is fully and currently tagged (reads the tags back from each file)."""
+    from .verify import verify_library
+
+    path = _music_path(path)
+    if not os.path.exists(path):
+        console.print(f"[bold red]Error:[/bold red] {path} not found")
+        raise typer.Exit(1)
+    with console.status("[bold cyan]Reading tags…[/bold cyan]", spinner="dots"):
+        total, ok, problems, examples = verify_library(path)
+
+    pct = 100 * ok / max(total, 1)
+    console.print(f"\nTotal tracks: [bold]{total}[/bold]")
+    console.print(f"Fully OK:     [bold green]{ok}[/bold green] ({pct:.1f}%)")
+    console.print(f"With issues:  [bold]{total - ok}[/bold]")
+    for issue, count in problems.most_common():
+        console.print(f"\n  [yellow]{count:5d}[/yellow]  {issue}")
+        for e in examples[issue][:5]:
+            console.print(f"           [dim]{e[:80]}[/dim]")
+    console.print()
+    if ok != total:
+        raise typer.Exit(1)
 
 
 # ─── Cleanup ────────────────────────────────────────────────

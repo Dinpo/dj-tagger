@@ -12,7 +12,7 @@ Essentia TensorFlow models and writes tags: genre (Beatport → Last.fm → ML),
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 93, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 100, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
   auto-memory). Filenames follow `Artist - Title.<ext>`.
@@ -22,6 +22,7 @@ No cloud APIs for audio; only lightweight genre lookups hit the network.
 | File | Responsibility |
 |------|----------------|
 | `cli.py` | Typer commands + Rich UI. Commands: **setup**, tag, info, stats, find, export, **genre-stats**, **rerole**, suggest, health, clean-genres, fix-audit, convert-keys, bench-bpm |
+| `verify.py` | `djtagger verify` logic (full tag-set check per file; `scripts/verify_library.py` is now a thin wrapper) |
 | `models.py` | Model registry (`MODELS`, `LABELS`), `download_all` for `djtagger setup`, `require_models` (friendly error instead of a TF crash). NO Essentia import |
 | `analyzer.py` | Loads TF models; `analyze_track()` returns the result dict (genre preds, moods, danceability, vocal, energy, arc features, set_role) |
 | `dsp.py` | Pure-numpy audio features. NO Essentia. Shared framing/FFT via `_frames`/`_magnitude_spectra` |
@@ -136,10 +137,10 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
     transiently, the ML fallback gets merged into curated Beatport genres.
     Use `--upgrade` (keeps genres, no network) or `--retag-source ml` (only
     touches ml-source tracks, and can upgrade them to Beatport).
-- **Verify by reading tags, not run summaries.** `scripts/verify_library.py
-  <lib>` reads every file (case-insensitive `.mp3` via `find_mp3s`) and checks
-  version, role, PULSE_REG, energy, genre source, junk/wide genre, and the
-  `Role:` comment; exit 1 on any issue. A run that reports "0 failed" can
+- **Verify by reading tags, not run summaries.** `djtagger verify <lib>`
+  reads every audio file (all formats, via `find_audio_files`) and checks
+  version, role, PULSE_REG, energy, genre source, junk/wide genre, the
+  `Role:` comment and a non-zero header length; exit 1 on any issue. A run that reports "0 failed" can
   still leave stale tags (the ml→ml merge bug was found this way).
 - **Operational notes.** The library is on an external volume that may be
   unmounted; check `/Volumes/Multimedia` first. Files renamed during a run
@@ -187,6 +188,19 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   installs as a new user would on Ubuntu + macOS, Python 3.10 and 3.13.
   Package version is 8.0.0 (matches TAGGER_VERSION v8; `__version__` reads
   the installed metadata).
+- **Install + first run (2026-11-02).** Recommended install is
+  `uv tool install git+https://github.com/Dinpo/dj-tagger` (uv picks a
+  Python that fits `requires-python = ">=3.10,<3.15"`, capped at the newest
+  essentia wheel). `tag` calls `cli._ensure_models()` first: if required
+  models are missing and stdin is a TTY it runs the setup wizard
+  (`_run_setup_wizard`: models, optional music folder, optional Last.fm
+  key) and continues; non-TTY gets a "run djtagger setup" error. Answers
+  live in `~/.config/djtagger/config.json` (0600; env vars win). Commands
+  resolve their folder via `cli._music_path()`: argument, else saved
+  folder, else an error. They NEVER fall back to the current directory
+  (it used to be `.`, which made a bare `djtagger tag` tag wherever you
+  stood). Testing the wizard needs a real pty: macOS `script` sends EOF
+  before the first prompt; drive it with a Python `pty.fork` loop.
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet
@@ -216,7 +230,7 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   prior genre. Apply resolver changes with `tag --retag-source ml`.
 - **Verifying "properly tagged":** the resume check only looks for
   GENRE_SOURCE, so it does not prove completeness. Run
-  `scripts/verify_library.py` (last run 2026-11-02, all formats: 3,723
+  `djtagger verify` (last run 2026-11-02, all formats: 3,723
   tracks, 3,722 clean; the one flag is a coherent 4-genre house list on an
   ML-only M4A, a false positive of the "4+ ML genres" heuristic).
 - **Pending, user-driven:** grading roles by ear, then tune

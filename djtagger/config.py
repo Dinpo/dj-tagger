@@ -1,15 +1,51 @@
 """Settings, paths, and constants."""
 
+import json
 import os
+
+# ─── User config file ───────────────────────────────────────
+# Answers from the setup wizard (`djtagger setup`, or the first run) are kept
+# here so users never have to export environment variables. Precedence for
+# each setting: environment variable > config file > built-in default.
+
+CONFIG_FILE = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "djtagger", "config.json",
+)
+
+
+def load_user_config() -> dict:
+    try:
+        with open(CONFIG_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_user_config(updates: dict) -> None:
+    """Merge *updates* into the config file (created private: it may hold an API key)."""
+    data = load_user_config()
+    data.update(updates)
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+_user = load_user_config()
 
 # ─── Paths ──────────────────────────────────────────────────
 
-MODEL_DIR = os.environ.get(
-    "DJTAGGER_MODEL_DIR",
-    os.path.expanduser("~/.local/essentia-models"),
+MODEL_DIR = (
+    os.environ.get("DJTAGGER_MODEL_DIR")
+    or _user.get("model_dir")
+    or os.path.expanduser("~/.local/essentia-models")
 )
 
-DEFAULT_MUSIC_PATH = os.environ.get("DJTAGGER_MUSIC_PATH", ".")
+# Empty when nothing is configured: commands then ask for a folder instead of
+# silently acting on the current directory (`tag` writes to files).
+DEFAULT_MUSIC_PATH = os.environ.get("DJTAGGER_MUSIC_PATH") or _user.get("music_path") or ""
 
 STATUS_FILE = "/tmp/dj-tagger-status.json"
 LOG_FILE = "/tmp/dj-tagger.log"
@@ -17,7 +53,7 @@ ERROR_FILE = "/tmp/dj-tagger-errors.log"
 
 # ─── API Keys ───────────────────────────────────────────────
 
-LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY", "")
+LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY") or _user.get("lastfm_api_key", "")
 LASTFM_URL = "https://ws.audioscrobbler.com/2.0/"
 
 # ─── Tagger ─────────────────────────────────────────────────

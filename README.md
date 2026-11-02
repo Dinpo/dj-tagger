@@ -8,20 +8,24 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 
 ## Quick Start
 
-Runs on **macOS** (Apple Silicon or Intel) and **Linux x86_64** with **Python 3.10 to 3.14**. Windows works through [WSL2](https://learn.microsoft.com/windows/wsl/install). See [Requirements](#requirements) for details.
+Runs on **macOS** (Apple Silicon or Intel) and **Linux x86_64**. Windows works through [WSL2](https://learn.microsoft.com/windows/wsl/install). See [Requirements](#requirements).
+
+**1. Install** (one command). It uses [uv](https://docs.astral.sh/uv/), which picks or downloads a suitable Python by itself, so you don't need to install Python or make a virtual environment:
 
 ```bash
-git clone https://github.com/Dinpo/dj-tagger.git
-cd dj-tagger
-python3.12 -m venv .venv          # any Python 3.10+; on macOS the built-in python3 is 3.9, too old
-source .venv/bin/activate
-pip install -e .
-djtagger setup                    # downloads the ML models (~30 MB, once)
-
-djtagger tag /path/to/music --dry-run   # analyze a folder, change nothing
-djtagger tag /path/to/music             # analyze and write tags
-djtagger info "/path/to/music/Artist - Title.flac"
+curl -LsSf https://astral.sh/uv/install.sh | sh            # only if you don't have uv yet
+uv tool install git+https://github.com/Dinpo/dj-tagger
 ```
+
+**2. Run it.** The first run sets itself up: it offers to download the ML models (~30 MB, once) and asks two optional questions, your music folder and a Last.fm API key, then carries on:
+
+```bash
+djtagger tag "/path/to/music" --dry-run    # analyze, change nothing
+djtagger tag "/path/to/music"              # analyze and write tags
+djtagger verify                            # check every track came out complete
+```
+
+Once your music folder is saved you can leave the path off (`djtagger tag`). Change the answers any time with `djtagger setup`. Update with `uv tool upgrade djtagger`.
 
 Try it on a copy or a small folder first, and read the next section: tagging writes to your files.
 
@@ -119,22 +123,34 @@ Installed automatically by `pip install -e .`:
 
 ## Installation
 
+**Recommended:** `uv tool install git+https://github.com/Dinpo/dj-tagger` (see [Quick Start](#quick-start)). No Python or venv to manage; `djtagger` lands on your PATH.
+
+**With pipx** (needs Python 3.10+ already installed): `pipx install git+https://github.com/Dinpo/dj-tagger`.
+
+**From a clone** (to hack on it):
+
 ```bash
 git clone https://github.com/Dinpo/dj-tagger.git
 cd dj-tagger
-python3.12 -m venv .venv
+python3.12 -m venv .venv          # any Python 3.10-3.14; macOS's built-in python3 is 3.9, too old
 source .venv/bin/activate
-pip install -e .
-djtagger setup
+pip install -e ".[dev]"
+pytest                            # optional: run the tests
 ```
 
-`djtagger setup` downloads the Essentia models and genre label lists into `~/.local/essentia-models/` (set `DJTAGGER_MODEL_DIR` to use another folder). It skips files that are already there, so it is safe to re-run; `--force` re-downloads everything. If you run `djtagger tag` before setup, it stops with a message telling you to run it.
+### First run and `djtagger setup`
 
-To update later: `git pull && pip install -e .`.
+The first command that needs the models (`tag`) offers to set up, then continues with what you asked for. Setup does three things:
+
+1. **Downloads the models** into `~/.local/essentia-models/` (skips files already there).
+2. **Asks for your music folder** (optional). Commands then use it when you leave the path off. Without a saved folder, commands ask you to name one; they never act on the current directory by accident.
+3. **Asks for a Last.fm API key** (optional, [free here](https://www.last.fm/api/account/create)). It improves genres for tracks Beatport does not have.
+
+Answers are saved to `~/.config/djtagger/config.json` (readable only by you, since it can hold the API key). Run `djtagger setup` again to change them, or `djtagger setup --force` to re-download the models. In scripts and other non-interactive use nothing prompts: a missing model stops with "run `djtagger setup`", and the environment variables below override the file.
 
 ### Download ML Models
 
-`djtagger setup` is the easy way. To fetch the models by hand instead (e.g. on a machine without direct network access), download these files from `https://essentia.upf.edu/models/` into the model folder:
+Setup does this for you. To fetch the models by hand instead (e.g. on a machine without direct network access), download these files from `https://essentia.upf.edu/models/` into the model folder:
 
 | File | Path under `/models/` | Needed |
 |------|-----------------------|--------|
@@ -152,11 +168,7 @@ The genre label lists are fetched and cached automatically on the first run. Wit
 
 ### Last.fm API Key (Optional)
 
-For Last.fm genre lookups (tier 2), get a free API key at [last.fm/api](https://www.last.fm/api/account/create) and set it:
-
-```bash
-export LASTFM_API_KEY="your_api_key_here"
-```
+For Last.fm genre lookups (tier 2), get a free API key at [last.fm/api](https://www.last.fm/api/account/create) and paste it when `djtagger setup` asks (or set `LASTFM_API_KEY` in your environment).
 
 Without this key, genre resolution falls back directly from Beatport to ML-only predictions.
 
@@ -165,7 +177,7 @@ Without this key, genre resolution falls back directly from Beatport to ML-only 
 ### Tag files
 
 ```bash
-# Tag a folder (recursive)
+# Tag a folder (recursive); leave the path off to use the folder saved by setup
 djtagger tag /path/to/music
 
 # Dry run — analyze without writing tags
@@ -617,10 +629,12 @@ Example: `Role: Builder | Energy: Mid | Mood: Neutral | Edge: Soft | Peak: 0.95 
 
 ### Environment Variables
 
+Setup saves these in `~/.config/djtagger/config.json`; an environment variable, when set, wins over the file.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DJTAGGER_MODEL_DIR` | `~/.local/essentia-models/` | Path to the directory containing Essentia TF model `.pb` files |
-| `DJTAGGER_MUSIC_PATH` | `.` (current directory) | Default music path for `tag` and `stats` commands when no argument is given |
+| `DJTAGGER_MUSIC_PATH` | the folder saved by setup, else none | Default folder for commands run without a path. With neither, commands ask for one |
 | `LASTFM_API_KEY` | *(none — disables Last.fm)* | Last.fm API key for genre lookups. Without this, tier 2 is skipped |
 
 ### ML Thresholds
@@ -748,9 +762,9 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Beatport returns no results** — Beatport's page structure may change. If you see a "Beatport page structure changed" warning on stderr, scraping is broken for that run. Genres will fall through to Last.fm/ML. This does not affect already-tagged files.
 
-**"LASTFM_API_KEY not set"** — This is a one-time warning printed to stderr. Last.fm lookups are disabled; genre resolution goes from Beatport directly to ML. Set the `LASTFM_API_KEY` environment variable to enable tier 2.
+**"no Last.fm API key"**: a one-time note. Last.fm lookups are off, so genre resolution goes from Beatport straight to ML. Add a key with `djtagger setup` (or set `LASTFM_API_KEY`).
 
-**"Required model files are missing"**: run `djtagger setup`. If you keep the models somewhere else, point `DJTAGGER_MODEL_DIR` at that folder (it must be set for every run, e.g. in your shell profile).
+**"Required model files are missing" / "models are not downloaded yet"**: run `djtagger setup`. If you keep the models somewhere else, point `DJTAGGER_MODEL_DIR` at that folder (it must be set for every run, e.g. in your shell profile).
 
 **pip fails with "setup.py not found" or cannot find essentia-tensorflow.** Your Python is too old or your platform has no essentia wheel. Check `python3 --version` (needs 3.10+) and see [Requirements](#requirements). Recreate the venv with a newer Python: `rm -rf .venv && python3.12 -m venv .venv`.
 
@@ -758,9 +772,9 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Re-tagging.** By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything (but see the caution in the flags table: prefer `--upgrade` to backfill new fields, or `--retag-source ml` to re-resolve ML genres). Use `--fix-comments` to only regenerate comments from existing energy/valence values (no ML re-analysis needed).
 
-**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `.venv/bin/python scripts/verify_library.py /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
+**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `djtagger verify /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
 
-**A track loads as 0 seconds after tagging.** Some FLAC exports (typically from FFmpeg-based tools) leave the sample count in the header at zero. The audio itself is intact, and players that had the length cached keep working, but once a tag write changes the file, DJ software re-reads the header and shows a 0-second track. DJ Tagger never touches the header or the audio, and it now **refuses to write tags** to such a file (reported as a failed track with "header reports 0 length"), so tagging cannot trigger the problem; `scripts/verify_library.py` also flags these files. Fix one by re-encoding it losslessly (e.g. `ffmpeg -i in.flac -c:a flac out.flac`) and copying the tags back; FLAC is lossless, so the decoded audio stays bit-identical.
+**A track loads as 0 seconds after tagging.** Some FLAC exports (typically from FFmpeg-based tools) leave the sample count in the header at zero. The audio itself is intact, and players that had the length cached keep working, but once a tag write changes the file, DJ software re-reads the header and shows a 0-second track. DJ Tagger never touches the header or the audio, and it now **refuses to write tags** to such a file (reported as a failed track with "header reports 0 length"), so tagging cannot trigger the problem; `djtagger verify` also flags these files. Fix one by re-encoding it losslessly (e.g. `ffmpeg -i in.flac -c:a flac out.flac`) and copying the tags back; FLAC is lossless, so the decoded audio stays bit-identical.
 
 **Serato cue markers.** `scripts/serato_cues.py` reads the cue points Serato stores in each file (the `Serato Markers2` frame), e.g. to compare ENTRY / EXIT markers against detection experiments. `--scan <dir>` summarizes a folder.
 

@@ -390,8 +390,8 @@ def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
     if not LASTFM_API_KEY:
         if not _lastfm_warned:
             print(
-                "[djtagger] Warning: LASTFM_API_KEY not set — "
-                "Last.fm lookups disabled. Set the env var for better genre results.",
+                "[djtagger] Note: no Last.fm API key, so Last.fm lookups are off. "
+                "Run `djtagger setup` to add one for better genres.",
                 file=sys.stderr,
             )
             _lastfm_warned = True

@@ -7,7 +7,7 @@ name = "djtagger"
 version = "8.0.0"
 description = "DJ library tagger: genre, energy, moods and a DJ set role via Essentia ML + Beatport + Last.fm"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"  # essentia-tensorflow ships wheels up to 3.14
 license = {text = "MIT"}
 authors = [{name = "Dino Patti"}]
 keywords = ["dj", "music", "tagging", "serato", "essentia", "id3", "flac"]
