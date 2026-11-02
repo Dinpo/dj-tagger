@@ -179,12 +179,13 @@ Never use the em dash character (U+2014) anywhere (comments, commit
 messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
 (Box-drawing `─` is fine.) This is enforced in code review.
 
-## Current state (2026-10-26)
+## Current state (2026-11-02)
 
 - `TAGGER_VERSION` is **v8** (bumped when PULSE_REG was added; bump again
   whenever the stored tag set changes so `tag --upgrade` can find stale files).
   All work committed and pushed to `origin/main`.
-- **Library verified 100%:** all 3,690 tracks in `_DJ Music` are at v8 with a
+- **Library fully tagged:** all 3,723 tracks in `_DJ Music` (3,690 MP3 +
+  33 FLAC/M4A/AIFF/WAV, tagged 2026-11-02) are at v8 with a
   valid role, PULSE_REG, energy, a non-junk genre, and a `Role:` comment.
   Distribution roughly Opener 21% / Builder 20% / Peak 33% / Closer 25%.
 - **ML-genre quality: fixed and applied.** The 5-class electronic genre head
@@ -194,9 +195,9 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   prior genre. Apply resolver changes with `tag --retag-source ml`.
 - **Verifying "properly tagged":** the resume check only looks for
   GENRE_SOURCE, so it does not prove completeness. Run
-  `scripts/verify_library.py` (last run 2026-10-26: 3,690/3,690 MP3s OK;
-  that run predates multi-format, and `_DJ Music` also holds ~33 FLAC/M4A/
-  AIFF/WAV tracks that were never tagged).
+  `scripts/verify_library.py` (last run 2026-11-02, all formats: 3,723
+  tracks, 3,722 clean; the one flag is a coherent 4-genre house list on an
+  ML-only M4A, a false positive of the "4+ ML genres" heuristic).
 - **Pending, user-driven:** grading roles by ear, then tune
   `ROLE_THRESHOLDS` / `FEATURE_RANGE` and `rerole`. Parked: hypnotic-groove
   detection and ENTRY/EXIT cue detection (both need more labels; see notes).
