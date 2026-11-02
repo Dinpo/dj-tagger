@@ -193,6 +193,56 @@ def _make_summary_table(
 
 
 # ═════════════════════════════════════════════════════════════
+#  SETUP command
+# ═════════════════════════════════════════════════════════════
+
+
+@app.command()
+def setup(
+    force: bool = typer.Option(False, "--force", help="Re-download files that are already present"),
+) -> None:
+    """Download the ML models DJ Tagger needs (run once after installing)."""
+    from .config import MODEL_DIR
+    from .models import download_all, missing_models
+
+    console.print(f"\n[bold cyan]⬇  Downloading models[/bold cyan] to [dim]{MODEL_DIR}[/dim]")
+    console.print("[dim](about 30 MB; set DJTAGGER_MODEL_DIR to use another folder)[/dim]\n")
+
+    def show(name: str, status: str) -> None:
+        mark = {"downloaded": "[green]✓[/green]", "present": "[dim]·[/dim]"}.get(status, "[red]✗[/red]")
+        console.print(f"  {mark} {name} [dim]{status}[/dim]")
+
+    download_all(force=force, on_item=show)
+
+    missing_required = missing_models(required_only=True)
+    if missing_required:
+        console.print(
+            f"\n[bold red]Setup incomplete:[/bold red] required models still missing: "
+            f"{', '.join(missing_required)}. Check your network and run `djtagger setup` again."
+        )
+        raise typer.Exit(1)
+    missing_optional = missing_models()
+    if missing_optional:
+        console.print(
+            f"\n[yellow]Optional models missing[/yellow] ({', '.join(missing_optional)}): "
+            f"tagging works, with fallbacks for those features."
+        )
+    console.print("\n[bold green]Ready.[/bold green] Next: [bold]djtagger tag /path/to/music --dry-run[/bold]\n")
+
+
+def _load_models_or_exit():
+    """Load the ML models, or exit with a fix-it message if required ones are missing."""
+    from .analyzer import load_models
+    from .models import ModelsMissingError
+
+    try:
+        return load_models()
+    except ModelsMissingError as ex:
+        console.print(f"\n[bold red]Error:[/bold red] {ex}\n")
+        raise typer.Exit(1)
+
+
+# ═════════════════════════════════════════════════════════════
 #  TAG command
 # ═════════════════════════════════════════════════════════════
 
@@ -351,7 +401,7 @@ def _tag_inner(
     # ─── Load models ────────────────────────────────────────
     console.print()
     with console.status("[bold cyan]Loading ML models…[/bold cyan]", spinner="dots"):
-        models = load_models()
+        models = _load_models_or_exit()
     console.print("[bold green]✓[/bold green] Models loaded\n")
 
     # ─── Init status ────────────────────────────────────────
@@ -1887,7 +1937,7 @@ def fix_audit(
         from .tagger import write_tags, parse_filename
         from .config import GENRE_KEEP_PROB
 
-        models = load_models()
+        models = _load_models_or_exit()
         console.print("[bold green]✓[/bold green] Models loaded\n")
     else:
         models = None

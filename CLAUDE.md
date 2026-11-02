@@ -12,7 +12,7 @@ Essentia TensorFlow models and writes tags: genre (Beatport → Last.fm → ML),
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 85, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 93, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
   auto-memory). Filenames follow `Artist - Title.<ext>`.
@@ -21,7 +21,8 @@ No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 | File | Responsibility |
 |------|----------------|
-| `cli.py` | Typer commands + Rich UI. Commands: tag, info, stats, find, export, **genre-stats**, **rerole**, suggest, health, clean-genres, fix-audit, convert-keys, bench-bpm |
+| `cli.py` | Typer commands + Rich UI. Commands: **setup**, tag, info, stats, find, export, **genre-stats**, **rerole**, suggest, health, clean-genres, fix-audit, convert-keys, bench-bpm |
+| `models.py` | Model registry (`MODELS`, `LABELS`), `download_all` for `djtagger setup`, `require_models` (friendly error instead of a TF crash). NO Essentia import |
 | `analyzer.py` | Loads TF models; `analyze_track()` returns the result dict (genre preds, moods, danceability, vocal, energy, arc features, set_role) |
 | `dsp.py` | Pure-numpy audio features. NO Essentia. Shared framing/FFT via `_frames`/`_magnitude_spectra` |
 | `classify.py` | Set-role model. `compute_arc()`, `drive_emo()`, `classify_role()`, `decide_role()`, genre-stats helpers. NO Essentia |
@@ -172,6 +173,20 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
     write Serato re-read the header and loaded a 0-second track. Repair is a
     lossless re-encode + tag copy (verify decoded PCM identical). Tag writes
     were verified to leave decoded audio bit-identical in all 5 formats.
+- **Usable by others (2026-11-02 review).** A fresh clone + venv was
+  tested end to end. Gotchas found and fixed: macOS's built-in python3 is
+  3.9 (pip then fails with a misleading "setup.py not found"), so the
+  README says to use python3.12+; models download via `djtagger setup`
+  (was 12 manual curl commands); missing models give a "run djtagger
+  setup" error instead of a TensorFlow traceback; Last.fm uses curl_cffi
+  (no curl binary needed). essentia-tensorflow only has wheels for macOS
+  and Linux x86_64 (Windows: WSL2). `parse_filename` falls back to the
+  file's artist/title tags when the filename has no artist or only a
+  number the artist tag contradicts (track numbers like `01 - Title`;
+  numeric artists like `1991` are kept). CI: `.github/workflows/tests.yml`
+  installs as a new user would on Ubuntu + macOS, Python 3.10 and 3.13.
+  Package version is 8.0.0 (matches TAGGER_VERSION v8; `__version__` reads
+  the installed metadata).
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet

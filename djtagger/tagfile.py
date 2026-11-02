@@ -4,8 +4,8 @@ The rest of DJ Tagger reads and writes tags through `TagFile` and never
 touches a format's native frames. Two kinds of field:
 
 - **standard** fields that DJ software displays: genre, bpm, key, album,
-  year, comment (the visible Serato comment) and detail (our hidden detail
-  comment).
+  year, artist, title (read only, as a filename fallback), comment (the
+  visible Serato comment) and detail (our hidden detail comment).
 - **custom** fields holding our analysis (ENERGY, SET_ROLE, ...).
 
 Native mapping per format:
@@ -17,6 +17,8 @@ Native mapping per format:
 | key     | TKEY              | INITIALKEY         | ----:com.apple.iTunes:initialkey |
 | album   | TALB              | ALBUM              | ©alb                          |
 | year    | TDRC              | DATE               | ©day                          |
+| artist  | TPE1              | ARTIST             | ©ART                          |
+| title   | TIT2              | TITLE              | ©nam                          |
 | comment | COMM::eng         | COMMENT            | ©cmt                          |
 | detail  | COMM:djtagger:eng | DJTAGGER_DETAIL    | ----:com.apple.iTunes:DJTAGGER_DETAIL |
 | custom  | TXXX:<NAME>       | DJTAGGER_<NAME>    | ----:com.apple.iTunes:DJTAGGER_<NAME> |
@@ -31,7 +33,7 @@ existing MP3 libraries read back unchanged.
 import os
 
 import mutagen
-from mutagen.id3 import COMM, ID3, TALB, TBPM, TCON, TDRC, TKEY, TXXX, ID3NoHeaderError
+from mutagen.id3 import COMM, ID3, TALB, TBPM, TCON, TDRC, TIT2, TKEY, TPE1, TXXX, ID3NoHeaderError
 from mutagen.mp4 import MP4, AtomDataType, MP4FreeForm
 
 # Extensions DJ Tagger analyzes and tags. .mp4 is left out on purpose: in a
@@ -116,7 +118,8 @@ class TagFile:
 
 # ─── ID3 (MP3, AIFF, WAV) ───────────────────────────────────
 
-_ID3_TEXT = {"genre": TCON, "bpm": TBPM, "key": TKEY, "album": TALB, "year": TDRC}
+_ID3_TEXT = {"genre": TCON, "bpm": TBPM, "key": TKEY, "album": TALB, "year": TDRC,
+             "artist": TPE1, "title": TIT2}
 _ID3_COMM_DESC = {"comment": "", "detail": "djtagger"}
 
 
@@ -197,6 +200,7 @@ class _ContainerID3File(_ID3File):
 _VORBIS_STD = {
     "genre": "GENRE", "bpm": "BPM", "key": "INITIALKEY", "album": "ALBUM",
     "year": "DATE", "comment": "COMMENT", "detail": CUSTOM_PREFIX + "DETAIL",
+    "artist": "ARTIST", "title": "TITLE",
 }
 
 
@@ -255,7 +259,8 @@ class _VorbisFile(TagFile):
 
 # ─── MP4 atoms (M4A) ────────────────────────────────────────
 
-_MP4_ATOM = {"genre": "\xa9gen", "album": "\xa9alb", "year": "\xa9day", "comment": "\xa9cmt"}
+_MP4_ATOM = {"genre": "\xa9gen", "album": "\xa9alb", "year": "\xa9day", "comment": "\xa9cmt",
+             "artist": "\xa9ART", "title": "\xa9nam"}
 _MP4_FREEFORM = {"key": "initialkey", "detail": CUSTOM_PREFIX + "DETAIL"}
 _MP4_MEAN = "----:com.apple.iTunes:"
 

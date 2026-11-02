@@ -6,10 +6,46 @@ Analyzes audio files (MP3, FLAC, M4A/ALAC, AIFF, WAV, Ogg Vorbis) using [Essenti
 
 Designed to run unattended on large collections. No LLM calls, no cloud APIs for audio — everything runs locally except lightweight genre lookups.
 
+## Quick Start
+
+Runs on **macOS** (Apple Silicon or Intel) and **Linux x86_64** with **Python 3.10 to 3.14**. Windows works through [WSL2](https://learn.microsoft.com/windows/wsl/install). See [Requirements](#requirements) for details.
+
+```bash
+git clone https://github.com/Dinpo/dj-tagger.git
+cd dj-tagger
+python3.12 -m venv .venv          # any Python 3.10+; on macOS the built-in python3 is 3.9, too old
+source .venv/bin/activate
+pip install -e .
+djtagger setup                    # downloads the ML models (~30 MB, once)
+
+djtagger tag /path/to/music --dry-run   # analyze a folder, change nothing
+djtagger tag /path/to/music             # analyze and write tags
+djtagger info "/path/to/music/Artist - Title.flac"
+```
+
+Try it on a copy or a small folder first, and read the next section: tagging writes to your files.
+
+## What DJ Tagger Changes in Your Files
+
+Everything is written into the files' own tags; there is no separate database. Per track:
+
+| Field | What happens |
+|-------|--------------|
+| **Comment** | **Replaced** with a summary that starts with the set role, e.g. `Role: Builder \| Energy: Mid \| Mood: Neutral \| ...`. Any comment you had in that field (for example Mixed In Key's `8A - Energy 6`) is overwritten. This is the field Serato and rekordbox show in their comment column. |
+| **Genre** | Filled when empty. An existing genre is kept, made more specific (`House` → `Deep House`), or extended with the new genres (capped at 5); junk values (URLs, promo spam) are replaced. See [Genre Resolution Rules](#genre-resolution-rules). |
+| **Album / year** | Filled from the Beatport match **only when empty or junk** (URL spam, a non-year). A real album or year is never overwritten. |
+| **BPM / key** | Left alone. Written only with `--detect-bpm-key`, and only when the field is empty. |
+| **Analysis fields** | Added: energy, valence, moods, set role, and the raw features behind them, as custom tags (see [Tags Written](#tags-written)). DJ software ignores these; `djtagger` commands read them. |
+| **Everything else** | Untouched: artist, title, artwork, Serato cues / beatgrids / analysis, Mixed In Key data, rekordbox data. The audio itself is never modified. |
+
+A file whose header reports zero length is refused rather than tagged (see [Troubleshooting](#troubleshooting)). Back up your library before the first full run, as with any tool that writes tags in bulk.
+
 ---
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+- [What DJ Tagger Changes in Your Files](#what-dj-tagger-changes-in-your-files)
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -53,19 +89,24 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 - **3-tier genre resolution** — Beatport → Last.fm → Essentia ML fallback
 - **Album + year** — filled from Beatport; empty / junk values (URL spam, non-year) are replaced, legit values preserved
 - **Remix-aware matching** — Scores Beatport results to find the right version
-- **Non-destructive** — Preserves existing genres, Serato cues, rekordbox data, BPM, key
+- **Careful with your data:** preserves Serato cues, rekordbox and Mixed In Key data, BPM, key, artwork and real album/year values; existing genres are kept or extended. The visible comment is replaced (see [What DJ Tagger Changes](#what-dj-tagger-changes-in-your-files))
 - **Rich CLI** — Live progress, stats dashboard, and color-coded output via [Rich](https://rich.readthedocs.io/)
-- **Resume support** — Skips already-tagged files automatically (checks for `TXXX:GENRE_SOURCE`)
+- **Resume support:** skips already-tagged files automatically (checks for our `GENRE_SOURCE` tag)
 - **Offline capable** — ML analysis is fully local; genre labels are cached after first network fetch
 - **Status file** — JSON status at `/tmp/dj-tagger-status.json` for external monitoring
 
 ## Requirements
 
-- **Python** >= 3.10
-- **curl** — used for Beatport scraping and Last.fm API calls (must be on `PATH`)
-- **Essentia TensorFlow models** — downloaded separately (see [Installation](#download-ml-models))
+- **Operating system:** macOS (Apple Silicon or Intel) or Linux x86_64. These are the platforms the [essentia-tensorflow](https://pypi.org/project/essentia-tensorflow/) wheels exist for. There are no Windows or Linux ARM wheels; on Windows, use [WSL2](https://learn.microsoft.com/windows/wsl/install) (Ubuntu) and follow the Linux steps. Recent essentia builds for Apple Silicon target macOS 15; on an older macOS, Python 3.12 picks up an older compatible build.
+- **Python 3.10 to 3.14.** Check with `python3 --version`. The `python3` that ships with macOS is 3.9, which is too old (pip then fails with a confusing "setup.py not found" error). Install a newer one with `brew install python@3.12` or from [python.org](https://www.python.org/downloads/).
+- **Network** for the one-time model download and for Beatport / Last.fm genre lookups. Audio analysis itself is fully local.
+- About **30 MB** of disk for the models, plus roughly 3-5 seconds of CPU per track.
+
+No other tools are needed (no ffmpeg or curl install): audio decoding is bundled with Essentia.
 
 ### Python Dependencies
+
+Installed automatically by `pip install -e .`:
 
 | Package | Purpose |
 |---------|---------|
@@ -74,63 +115,40 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 | [numpy](https://numpy.org/) | Numerical operations on model outputs |
 | [typer](https://typer.tiangolo.com/) >= 0.9 | CLI framework |
 | [rich](https://rich.readthedocs.io/) >= 13.0 | Terminal formatting, progress bars, tables |
+| [curl_cffi](https://github.com/lexiforest/curl_cffi) >= 0.7 | HTTP for Beatport (browser TLS fingerprint) and Last.fm |
 
 ## Installation
 
 ```bash
-git clone https://github.com/dinopatti/dj-tagger.git
+git clone https://github.com/Dinpo/dj-tagger.git
 cd dj-tagger
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+djtagger setup
 ```
+
+`djtagger setup` downloads the Essentia models and genre label lists into `~/.local/essentia-models/` (set `DJTAGGER_MODEL_DIR` to use another folder). It skips files that are already there, so it is safe to re-run; `--force` re-downloads everything. If you run `djtagger tag` before setup, it stops with a message telling you to run it.
+
+To update later: `git pull && pip install -e .`.
 
 ### Download ML Models
 
-DJ Tagger needs Essentia TensorFlow models. Download them to `~/.local/essentia-models/` (or set `DJTAGGER_MODEL_DIR`):
+`djtagger setup` is the easy way. To fetch the models by hand instead (e.g. on a machine without direct network access), download these files from `https://essentia.upf.edu/models/` into the model folder:
 
-```bash
-mkdir -p ~/.local/essentia-models && cd ~/.local/essentia-models
+| File | Path under `/models/` | Needed |
+|------|-----------------------|--------|
+| `discogs-effnet-bs64-1.pb` | `feature-extractors/discogs-effnet/` | required |
+| `genre_discogs400-discogs-effnet-1.pb` | `classification-heads/genre_discogs400/` | required |
+| `mood_happy-discogs-effnet-1.pb` (and `mood_sad`, `mood_aggressive`, `mood_relaxed`) | `classification-heads/mood_<name>/` | required |
+| `genre_electronic-discogs-effnet-1.pb` | `classification-heads/genre_electronic/` | optional |
+| `danceability-discogs-effnet-1.pb` | `classification-heads/danceability/` | optional |
+| `voice_instrumental-discogs-effnet-1.pb` | `classification-heads/voice_instrumental/` | optional |
+| `msd-musicnn-1.pb` | `feature-extractors/musicnn/` | optional |
+| `emomusic-msd-musicnn-2.pb` | `classification-heads/emomusic/` | optional |
+| `deepsquare-k16-3.pb` | `tempo/tempocnn/` | optional (`--detect-bpm-key` only) |
 
-# Embedding models
-curl -LO https://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-bs64-1.pb
-curl -LO https://essentia.upf.edu/models/feature-extractors/musicnn/msd-musicnn-1.pb
-
-# Genre classification heads
-curl -LO https://essentia.upf.edu/models/classification-heads/genre_discogs400/genre_discogs400-discogs-effnet-1.pb
-curl -LO https://essentia.upf.edu/models/classification-heads/genre_electronic/genre_electronic-discogs-effnet-1.pb
-
-# Mood classification heads
-for mood in happy sad aggressive relaxed party; do
-  curl -LO "https://essentia.upf.edu/models/classification-heads/mood_${mood}/mood_${mood}-discogs-effnet-1.pb"
-done
-
-# Danceability + Arousal/Valence
-curl -LO https://essentia.upf.edu/models/classification-heads/danceability/danceability-discogs-effnet-1.pb
-curl -LO https://essentia.upf.edu/models/classification-heads/emomusic/emomusic-msd-musicnn-2.pb
-
-# Voice/instrumental (v7 set-role: vocal presence)
-curl -LO https://essentia.upf.edu/models/classification-heads/voice_instrumental/voice_instrumental-discogs-effnet-1.pb
-```
-
-You should end up with 12 `.pb` files:
-
-```
-~/.local/essentia-models/
-├── discogs-effnet-bs64-1.pb          # EffNet embedding model
-├── msd-musicnn-1.pb                  # MusicNN embedding model
-├── genre_discogs400-discogs-effnet-1.pb
-├── genre_electronic-discogs-effnet-1.pb
-├── mood_happy-discogs-effnet-1.pb
-├── mood_sad-discogs-effnet-1.pb
-├── mood_aggressive-discogs-effnet-1.pb
-├── mood_relaxed-discogs-effnet-1.pb
-├── danceability-discogs-effnet-1.pb
-├── voice_instrumental-discogs-effnet-1.pb   # v7 vocal presence
-└── emomusic-msd-musicnn-2.pb         # Arousal/Valence regression
-```
-
-If any model files are missing, DJ Tagger still works: it falls back to heuristics for the affected features and logs a warning. Without `voice_instrumental`, the set-role vocal signal is treated as 0.
+The genre label lists are fetched and cached automatically on the first run. Without an optional model DJ Tagger still works: it falls back to heuristics for that feature and logs a warning (without `voice_instrumental`, the set-role vocal signal is treated as 0). The authoritative list lives in `djtagger/models.py`.
 
 ### Last.fm API Key (Optional)
 
@@ -392,7 +410,9 @@ DJ Tagger parses artist and title from the filename using this format:
 Artist - Title.mp3
 ```
 
-The ` - ` separator (space-dash-space) splits artist from title. If no separator is found, the entire filename (minus extension) is treated as the title with no artist.
+The ` - ` separator (space-dash-space) splits artist from title. The artist and title are only used to look the track up on Beatport and Last.fm; your files are never renamed.
+
+**When the filename does not name the artist** (e.g. `Teardrop.flac`, or `01 - Teardrop.flac` where `01` is a track number), DJ Tagger falls back to the file's own artist and title tags. A numeric name is kept as the artist when the file's artist tag agrees (`1991 - If Only.mp3` stays artist `1991`). With neither, the track gets no artist and the lookup relies on the title, so genres more often fall back to ML.
 
 **Artist cleaning:** A trailing country code in parentheses (e.g., `(UK)`, `(US)`) is stripped from the artist name before lookups.
 
@@ -402,7 +422,8 @@ The ` - ` separator (space-dash-space) splits artist from title. If no separator
 |----------|--------|-------|
 | `Friction & Skream - Teardrop (Friction & Subsonic Remix).mp3` | `Friction & Skream` | `Teardrop (Friction & Subsonic Remix)` |
 | `Chase & Status (UK) - Blind Faith.mp3` | `Chase & Status` (cleaned) | `Blind Faith` |
-| `Unknown Track.mp3` | *(empty)* | `Unknown Track` |
+| `01 - Teardrop.flac` with artist tag `Massive Attack` | `Massive Attack` (from tags) | `Teardrop` (title tag if set) |
+| `Unknown Track.mp3` with no artist tag | *(empty)* | `Unknown Track` |
 
 > **Supported formats:** `.mp3`, `.flac`, `.m4a`, `.aif` / `.aiff`, `.wav` and `.ogg` (extensions matched case-insensitively). Other files, including `.mp4` (usually video in a music folder) and macOS `._*` resource files, are skipped during scanning.
 
@@ -448,7 +469,7 @@ Energy bands decide Opener vs Peak. Builder and Closer share the mid band and ar
 
 **Heavy-track lift (effective energy):** the mood-based energy underrates smooth-but-driving production (melodic/hypnotic techno reads low even when it is a floor-filler). For the role decision only, a track's *effective* energy is lifted by its structural heaviness (sub-bass weight + drop height), one-directional (never lowered). The stored `arc_level` remains the raw measured energy. This is a partial fix; genuinely low-energy hypnotic grooves remain a known limitation (see `docs/superpowers/notes/`).
 
-All thresholds and normalization ranges are calibrated against the library and stored in `config.py` (`ROLE_THRESHOLDS` / `FEATURE_RANGE`). On the full library this yields roughly Opener 20% / Builder 21% / Peak 33% / Closer 26%.
+All thresholds and normalization ranges are stored in `config.py` (`ROLE_THRESHOLDS` / `FEATURE_RANGE`). They were calibrated on one ~3,700-track electronic / house / techno DJ library, where they yield roughly Opener 21% / Builder 20% / Peak 33% / Closer 25%. On a different kind of library the split will differ: after tagging, run `djtagger genre-stats` so roles are judged within each genre, then `djtagger rerole` (seconds, no re-analysis). Check `djtagger stats` for the resulting split.
 
 **Tuning:** roles are decided from stored tags, so after editing the thresholds you can re-apply them library-wide in seconds with `djtagger rerole` (no re-analysis). See [Set-role tuning](#set-role-tuning-genre-stats-and-rerole).
 
@@ -459,7 +480,7 @@ Genre detection tries three sources in priority order, stopping at the first hit
 | Priority | Source | Method | Quality |
 |----------|--------|--------|---------|
 | 1st | **Beatport** | Scrapes search results, parses `__NEXT_DATA__` JSON | Best — human-curated, track-level |
-| 2nd | **Last.fm** | `artist.getTopTags` API via curl, merged with ML predictions | Good — artist-level, supplemented by ML |
+| 2nd | **Last.fm** | `artist.getTopTags` API, merged with ML predictions | Good: artist-level, supplemented by ML |
 | 3rd | **Essentia ML** | Local TensorFlow model predictions only | Decent — broad Discogs taxonomy |
 
 **Beatport** results are scored and the best match is selected (see [Remix-Aware Matching](#remix-aware-matching)). Results are cached in a bounded LRU cache (500 entries) to reduce repeat lookups.
@@ -616,8 +637,8 @@ These are compile-time constants in `config.py`:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `BEATPORT_TIMEOUT` | 8 s | Curl timeout for Beatport page fetch |
-| `LASTFM_TIMEOUT` | 5 s | Curl timeout for Last.fm API call |
+| `BEATPORT_TIMEOUT` | 8 s | Timeout for the Beatport page fetch |
+| `LASTFM_TIMEOUT` | 5 s | Timeout for the Last.fm API call |
 | `SOCKET_TIMEOUT` | 10 s | Global Python socket timeout (set during `tag` command) |
 
 ## Monitoring
@@ -675,13 +696,14 @@ When processing completes, `state` changes to `"done"` and `finished` and `elaps
 ```
 djtagger/
 ├── __init__.py       # Package version
-├── cli.py            # Typer CLI: tag, info, stats, find, export, genre-stats, rerole, suggest, health; Rich UI
+├── cli.py            # Typer CLI: setup, tag, info, stats, find, export, genre-stats, rerole, suggest, health; Rich UI
 ├── config.py         # Env vars, paths, constants, thresholds, set-role FEATURE_RANGE / ROLE_THRESHOLDS
 ├── analyzer.py       # Essentia model loading and ML inference (returns the analysis result dict)
 ├── dsp.py            # Pure-numpy audio features (centroid, flux, onset, sub-bass, dynamic range, loudness arc). NO Essentia, unit-tested
 ├── classify.py       # Set-role model: drive/emo indices, energy bands, genre-relative bands, decide_role. NO Essentia, unit-tested
 ├── genres.py         # Beatport scraping, Last.fm API, remix scoring, genre resolution
 ├── library.py        # Shared library scanning: reads all tracks into structured records
+├── models.py         # Model file registry, `djtagger setup` downloader, missing-model check (no Essentia import)
 ├── scanner.py        # Recursive audio-file discovery, resume filtering, version-aware upgrade filtering
 ├── tagfile.py        # Format-neutral tag access (ID3 / Vorbis / MP4) behind one TagFile API
 └── tagger.py         # Tag reading/writing via TagFile; role decision; filename parsing
@@ -728,7 +750,9 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **"LASTFM_API_KEY not set"** — This is a one-time warning printed to stderr. Last.fm lookups are disabled; genre resolution goes from Beatport directly to ML. Set the `LASTFM_API_KEY` environment variable to enable tier 2.
 
-**Models not found** — Ensure all 6 `.pb` files are in `~/.local/essentia-models/` (or the directory set by `DJTAGGER_MODEL_DIR`). The expected filenames are listed in [Installation](#download-ml-models).
+**"Required model files are missing"**: run `djtagger setup`. If you keep the models somewhere else, point `DJTAGGER_MODEL_DIR` at that folder (it must be set for every run, e.g. in your shell profile).
+
+**pip fails with "setup.py not found" or cannot find essentia-tensorflow.** Your Python is too old or your platform has no essentia wheel. Check `python3 --version` (needs 3.10+) and see [Requirements](#requirements). Recreate the venv with a newer Python: `rm -rf .venv && python3.12 -m venv .venv`.
 
 **Track analysis fails** — If a single track fails (corrupt file, unsupported encoding), it is logged to `/tmp/dj-tagger-errors.log` and skipped. The rest of the run continues.
 

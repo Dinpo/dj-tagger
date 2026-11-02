@@ -33,9 +33,12 @@ def tagged_version(filepath: str) -> str:
 
 
 def parse_filename(filepath: str) -> tuple[str, str, str]:
-    """Parse artist, clean-artist, and title from filename.
+    """Parse artist, clean-artist, and title for genre lookups.
 
-    Expects format: 'Artist - Title.<ext>'
+    The filename wins when it follows 'Artist - Title.<ext>' (DJ libraries
+    are often renamed that way on purpose). When the filename gives no
+    artist, or only a number that the file's artist tag contradicts (a track
+    number like '01 - Title'), the file's own artist/title tags are used.
     Returns (artist, artist_clean, title).
     """
     basename = os.path.splitext(os.path.basename(filepath))[0]
@@ -45,6 +48,16 @@ def parse_filename(filepath: str) -> tuple[str, str, str]:
         title = parts[1].strip()
     else:
         artist, title = "", basename.strip()
+    # A numeric "artist" may be a track number ('01 - Title') or a real
+    # artist ('999', '1991'); only the file's own artist tag can tell.
+    if not artist or artist.isdigit():
+        try:
+            tags = TagFile.open(filepath)
+            tag_artist, tag_title = tags.get("artist"), tags.get("title")
+        except Exception:
+            tag_artist = tag_title = ""
+        if tag_artist and tag_artist != artist:
+            artist, title = tag_artist, tag_title or title
     artist_clean = re.sub(r"\s*\([A-Z]{2}\)\s*$", "", artist).strip()
     return artist, artist_clean, title
 

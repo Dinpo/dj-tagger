@@ -23,6 +23,7 @@ from .config import (
     CAMELOT_MAP,
 )
 from . import classify
+from .models import require_models
 
 # ─── Genre label caches ──────────────────────────────────────
 
@@ -116,6 +117,7 @@ def _try_load(loader, path: str, **kwargs):
 def load_models(model_dir: str | None = None) -> dict:
     """Load all Essentia TensorFlow models. Returns a dict of model objects."""
     d = model_dir or MODEL_DIR
+    require_models(d)  # friendly "run djtagger setup" instead of a TF crash
     models: dict = {}
 
     # EffNet embedding model (required)

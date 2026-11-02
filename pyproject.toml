@@ -4,12 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "djtagger"
-version = "5.0.0"
-description = "Autonomous DJ music tagger — Essentia ML + Beatport + Last.fm"
+version = "8.0.0"
+description = "DJ library tagger: genre, energy, moods and a DJ set role via Essentia ML + Beatport + Last.fm"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Dino Patti"}]
+keywords = ["dj", "music", "tagging", "serato", "essentia", "id3", "flac"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
 
 dependencies = [
     "essentia-tensorflow",
@@ -23,8 +32,15 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[project.urls]
+Homepage = "https://github.com/Dinpo/dj-tagger"
+Issues = "https://github.com/Dinpo/dj-tagger/issues"
+
 [project.scripts]
 djtagger = "djtagger.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["djtagger*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

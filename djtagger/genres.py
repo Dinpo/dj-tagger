@@ -2,7 +2,6 @@
 
 import json
 import re
-import subprocess
 import sys
 from collections import OrderedDict
 from typing import Any
@@ -408,15 +407,12 @@ def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
                 f"&artist={_url_quote(art)}"
                 f"&api_key={LASTFM_API_KEY}&format=json"
             )
-            result = subprocess.run(
-                ["curl", "-s", "-m", str(LASTFM_TIMEOUT), url],
-                capture_output=True,
-                text=True,
-                timeout=LASTFM_TIMEOUT + 3,
-            )
-            if result.returncode != 0 or not result.stdout:
+            # curl_cffi (already used for Beatport) so no external curl binary
+            # is needed on PATH.
+            resp = _cffi_requests.get(url, timeout=LASTFM_TIMEOUT)
+            if resp.status_code != 200 or not resp.text:
                 continue
-            data = json.loads(result.stdout)
+            data = json.loads(resp.text)
             if "toptags" in data and "tag" in data["toptags"]:
                 tags = data["toptags"]["tag"]
                 if isinstance(tags, list):

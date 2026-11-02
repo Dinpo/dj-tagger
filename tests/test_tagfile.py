@@ -203,3 +203,33 @@ def test_zero_length_header_is_refused_and_file_untouched(tmp_path):
     assert "0 length" in msg
     assert tagger.fix_comments(p) == "skipped"  # never tagged by us
     assert open(p, "rb").read() == before
+
+
+@pytest.mark.parametrize("ext", FORMATS)
+def test_parse_filename_falls_back_to_tags(tmp_path, ext):
+    p = _copy(tmp_path, ext, "01 - Block Rockin Beats")
+    t = TagFile.open(p)
+    t.set("artist", "The Chemical Brothers")
+    t.set("title", "Block Rockin' Beats")
+    t.save()
+    assert tagger.parse_filename(p) == (
+        "The Chemical Brothers", "The Chemical Brothers", "Block Rockin' Beats")
+
+
+def test_parse_filename_prefers_artist_title_filename(tmp_path):
+    p = _copy(tmp_path, "flac", "Bicep - Glue")
+    t = TagFile.open(p)
+    t.set("artist", "Someone Else")
+    t.save()
+    assert tagger.parse_filename(p) == ("Bicep", "Bicep", "Glue")
+
+
+def test_parse_filename_keeps_numeric_artist_when_tags_agree(tmp_path):
+    # "1991" is a real artist, not a track number.
+    p = _copy(tmp_path, "m4a", "1991 - If Only")
+    t = TagFile.open(p)
+    t.set("artist", "1991")
+    t.save()
+    assert tagger.parse_filename(p)[0] == "1991"
+    bare = _copy(tmp_path, "wav", "999 - Find the Answer")  # no tags at all
+    assert tagger.parse_filename(bare)[:1] == ("999",)
