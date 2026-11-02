@@ -3,7 +3,7 @@
 import os
 from typing import Callable
 
-from .scanner import find_mp3s
+from .scanner import find_audio_files
 from .tagger import parse_filename, read_tags
 
 
@@ -21,7 +21,7 @@ def scan_library(
 
     *on_progress(current, total)* is called after each file if provided.
     """
-    all_mp3s = find_mp3s(path)
+    all_mp3s = find_audio_files(path)
     total = len(all_mp3s)
     tracks: list[dict] = []
 

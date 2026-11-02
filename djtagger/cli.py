@@ -227,7 +227,7 @@ def tag(
              "version are skipped.",
     ),
 ) -> None:
-    """Tag MP3 files with genre, energy, and mood metadata."""
+    """Tag audio files (MP3, FLAC, M4A, AIFF, WAV, Ogg) with genre, energy, and mood metadata."""
     global _log_fh, _err_fh
 
     # Set socket timeout
@@ -264,7 +264,7 @@ def _tag_inner(
     # Lazy imports (heavy — TF models)
     from .analyzer import analyze_track, load_models
     from .genres import resolve_metadata
-    from .scanner import filter_by_source, filter_outdated, filter_untagged, find_mp3s
+    from .scanner import filter_by_source, filter_outdated, filter_untagged, find_audio_files
     from .tagger import fix_comments as do_fix_comments
     from .tagger import parse_filename, read_tags, write_tags
     from rich.console import Group
@@ -272,8 +272,8 @@ def _tag_inner(
     # ─── Fix-comments mode ──────────────────────────────────
     if fix_comments:
         console.print("[bold cyan]🔧 Fix-comments mode[/bold cyan] — updating Serato comments\n")
-        all_mp3s = find_mp3s(path)
-        console.print(f"Found [bold]{len(all_mp3s)}[/bold] MP3 files")
+        all_mp3s = find_audio_files(path)
+        console.print(f"Found [bold]{len(all_mp3s)}[/bold] audio files")
 
         fixed = 0
         skipped_untagged = 0
@@ -312,9 +312,9 @@ def _tag_inner(
 
     # ─── Scan ───────────────────────────────────────────────
     console.print(f"\n[bold cyan]📁 Scanning[/bold cyan] {path}\n")
-    all_mp3s = find_mp3s(path)
+    all_mp3s = find_audio_files(path)
     total_files = len(all_mp3s)
-    console.print(f"Found [bold]{total_files}[/bold] MP3 files")
+    console.print(f"Found [bold]{total_files}[/bold] audio files")
 
     # Filter
     if retag_source:
@@ -551,9 +551,9 @@ def _tag_inner(
 
 @app.command()
 def info(
-    filepath: str = typer.Argument(..., help="Path to a single MP3 file"),
+    filepath: str = typer.Argument(..., help="Path to a single audio file"),
 ) -> None:
-    """Show DJ Tagger tags for a single MP3 file."""
+    """Show DJ Tagger tags for a single audio file."""
     from .tagger import parse_filename, read_tags
 
     if not os.path.isfile(filepath):
@@ -724,7 +724,7 @@ def stats(
         tracks = scan_library(path, on_progress=on_progress)
 
     if not tracks:
-        console.print("[yellow]No MP3 files found.[/yellow]")
+        console.print("[yellow]No audio files found.[/yellow]")
         return
 
     tagged_tracks = [t for t in tracks if t["tagged"]]
@@ -996,7 +996,7 @@ def find(
 
     tracks = _scan_with_progress(path)
     if not tracks:
-        console.print("[yellow]No MP3 files found.[/yellow]")
+        console.print("[yellow]No audio files found.[/yellow]")
         return
 
     # Parse range filters
@@ -1136,7 +1136,7 @@ def export(
         tracks = scan_library(path, on_progress=on_progress)
 
     if not tracks:
-        err_console.print("[yellow]No MP3 files found.[/yellow]")
+        err_console.print("[yellow]No audio files found.[/yellow]")
         return
 
     fields = [
@@ -1264,10 +1264,10 @@ def rerole(
     banding.
     """
     from collections import Counter
-    from .scanner import find_mp3s
+    from .scanner import find_audio_files
     from .tagger import rerole_file
 
-    mp3s = find_mp3s(path)
+    mp3s = find_audio_files(path)
     console.print(f"\n[bold cyan]🎚  Re-deciding roles[/bold cyan] on "
                   f"[bold]{len(mp3s)}[/bold] files\n")
     changed = skipped = errors = unchanged = 0
@@ -1551,7 +1551,7 @@ def health(
 
     tracks = _scan_with_progress(path)
     if not tracks:
-        console.print("[yellow]No MP3 files found.[/yellow]")
+        console.print("[yellow]No audio files found.[/yellow]")
         return
 
     tagged = [t for t in tracks if t["tagged"]]
@@ -1745,7 +1745,7 @@ def clean_genres(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be cleaned without writing"),
 ) -> None:
     """Remove junk genre tags (URLs, spam, foreign text) and replace with detected genres."""
-    from .scanner import find_mp3s
+    from .scanner import find_audio_files
     from .tagger import clean_junk_genre, read_tags
     from .config import is_junk_genre
 
@@ -1756,7 +1756,7 @@ def clean_genres(
     console.print(f"\n[bold cyan]🧹 Clean Genres[/bold cyan] {'(dry run)' if dry_run else ''}")
     console.print(f"[dim]{path}[/dim]\n")
 
-    all_mp3s = find_mp3s(path)
+    all_mp3s = find_audio_files(path)
     cleaned = 0
     junk_found = 0
 
@@ -1836,7 +1836,8 @@ def fix_audit(
     console.print(f"[dim]{summary.get('unique_tracks_with_issues', len(tracks))} tracks with issues[/dim]\n")
 
     # Supported formats for tagging
-    TAGGABLE = {".mp3", ".m4a", ".mp4", ".aac"}
+    from .tagfile import AUDIO_EXTS
+    TAGGABLE = set(AUDIO_EXTS)
 
     # Categorize what we can fix
     fixable: list[dict] = []
@@ -1869,7 +1870,7 @@ def fix_audit(
     if not fixable:
         console.print("[yellow]Nothing to fix (all issues are in unsupported formats or filenames).[/yellow]")
         if skipped_format:
-            console.print(f"[dim]  {len(skipped_format)} tracks in unsupported formats (WAV)[/dim]")
+            console.print(f"[dim]  {len(skipped_format)} tracks in unsupported formats[/dim]")
         if skipped_filename:
             console.print(f"[dim]  {len(skipped_filename)} tracks need filename fix (rename manually — Serato relinking required)[/dim]")
         console.print()
@@ -1896,7 +1897,6 @@ def fix_audit(
         t = item["track"]
         issues = item["issues"]
         path = t["path"]
-        ext = item["ext"]
         fname = os.path.basename(path)
         crates = ", ".join(t.get("crates", []))
 
@@ -1908,7 +1908,7 @@ def fix_audit(
             console.print(f"  [dim]→ Would analyze and fix[/dim]\n")
             continue
 
-        if ext == ".mp3" and models is not None:
+        if models is not None:
             try:
                 artist, artist_clean, title = parse_filename(path)
                 result = analyze_track(path, models, detect_bpm_key=True)
@@ -1955,58 +1955,9 @@ def fix_audit(
             except Exception as ex:
                 console.print(f"  [red]✗[/red] Error: {ex}\n")
 
-        elif ext in (".m4a", ".mp4", ".aac"):
-            # M4A: can detect BPM/key and write with mutagen MP4
-            try:
-                from mutagen.mp4 import MP4
-
-                result = analyze_track(path, models, detect_bpm_key=True) if models else None
-                if result is None:
-                    console.print(f"  [red]✗[/red] Models not loaded\n")
-                    continue
-
-                audio = MP4(path)
-                fixes = []
-
-                if "missing BPM" in issues and result.get("bpm"):
-                    audio.tags["tmpo"] = [int(round(result["bpm"]))]
-                    fixes.append(f"BPM: {result['bpm']:.2f}")
-
-                # M4A doesn't have a standard key tag, skip key for now
-                if "no key" in issues:
-                    fixes.append("Key: [dim]not supported for m4a[/dim]")
-
-                if "no genre" in issues:
-                    artist, artist_clean, title = parse_filename(path)
-                    meta = resolve_metadata(
-                        artist, artist_clean, title,
-                        result["genres"],
-                        ml_electronic_genres=result.get("electronic_genres"),
-                        use_beatport=True,
-                        genre_keep_prob=GENRE_KEEP_PROB,
-                    )
-                    final_genres = meta["genres"]
-                    genre_source = meta["source"]
-                    if final_genres:
-                        audio.tags["\xa9gen"] = ["; ".join(final_genres[:3])]
-                        fixes.append(f"Genre: {'; '.join(final_genres[:3])} [{genre_source}]")
-                    if meta.get("album"):
-                        audio.tags["\xa9alb"] = [meta["album"]]
-                        fixes.append(f"Album: {meta['album']}")
-                    if meta.get("year"):
-                        audio.tags["\xa9day"] = [meta["year"]]
-                        fixes.append(f"Year: {meta['year']}")
-
-                if fixes:
-                    audio.save()
-                    console.print(f"  [green]✓[/green] {', '.join(fixes)}\n")
-                    fixed_count += 1
-            except Exception as ex:
-                console.print(f"  [red]✗[/red] Error: {ex}\n")
-
     console.print(f"[bold green]Done![/bold green] Fixed {fixed_count} tracks.")
     if skipped_format:
-        console.print(f"[dim]Skipped {len(skipped_format)} WAV files (can't write tags to WAV)[/dim]")
+        console.print(f"[dim]Skipped {len(skipped_format)} files in unsupported formats[/dim]")
     if skipped_filename:
         console.print(
             f"[dim]Skipped {len(skipped_filename)} filename issues "
@@ -2031,10 +1982,9 @@ def convert_keys(
     """Convert all standard-notation keys (Am, Fm, etc.) to Camelot notation (8A, 4A, etc.)."""
     import re
 
-    from mutagen.id3 import ID3, TKEY
-
     from .config import CAMELOT_MAP
-    from .scanner import find_mp3s
+    from .scanner import find_audio_files
+    from .tagfile import TagFile
 
     if not os.path.exists(path):
         console.print(f"[bold red]Error:[/bold red] {path} not found")
@@ -2043,7 +1993,7 @@ def convert_keys(
     console.print(f"\n[bold cyan]🔑 Convert Keys to Camelot[/bold cyan] {'(dry run)' if dry_run else ''}")
     console.print(f"[dim]{path}[/dim]\n")
 
-    all_mp3s = find_mp3s(path)
+    all_mp3s = find_audio_files(path)
     camelot_pattern = re.compile(r"^\d{1,2}[AB]$", re.IGNORECASE)
 
     converted = 0
@@ -2061,23 +2011,20 @@ def convert_keys(
         task = progress.add_task("Scanning keys", total=len(all_mp3s))
         for mp3 in all_mp3s:
             try:
-                tags = ID3(mp3)
-                tkey = tags.getall("TKEY")
-                if not tkey or not tkey[0].text or not tkey[0].text[0].strip():
+                tags = TagFile.open(mp3)
+                key = tags.get("key")
+                if not key:
                     no_key += 1
                     progress.advance(task)
                     continue
-
-                key = tkey[0].text[0].strip()
 
                 if camelot_pattern.match(key):
                     # Normalize lowercase camelot (4a → 4A)
                     normalized = key.upper()
                     if normalized != key:
                         if not dry_run:
-                            tags.delall("TKEY")
-                            tags.add(TKEY(encoding=3, text=[normalized]))
-                            tags.save(mp3)
+                            tags.set("key", normalized)
+                            tags.save()
                         converted += 1
                     else:
                         already_camelot += 1
@@ -2093,9 +2040,8 @@ def convert_keys(
                             f"[dim]{os.path.basename(mp3)[:60]}[/dim]"
                         )
                     else:
-                        tags.delall("TKEY")
-                        tags.add(TKEY(encoding=3, text=[camelot]))
-                        tags.save(mp3)
+                        tags.set("key", camelot)
+                        tags.save()
                     converted += 1
                 else:
                     console.print(
@@ -2137,9 +2083,9 @@ def bench_bpm(
     import random
 
     import numpy as np
-    from mutagen.id3 import ID3
 
-    from .scanner import find_mp3s
+    from .scanner import find_audio_files
+    from .tagfile import TagFile
     from .tagger import parse_filename
     from .config import CAMELOT_MAP
 
@@ -2150,20 +2096,15 @@ def bench_bpm(
     console.print(f"\n[bold cyan]🎯 BPM + Key Benchmark[/bold cyan]")
     console.print(f"[dim]{path}[/dim]\n")
 
-    all_mp3s = find_mp3s(path)
+    all_mp3s = find_audio_files(path)
     # Only tracks that have existing BPM (from Serato)
     with_bpm: list[tuple[str, float, str]] = []
     for mp3 in all_mp3s:
         try:
-            tags = ID3(mp3)
-            tbpm = tags.getall("TBPM")
-            tkey = tags.getall("TKEY")
-            bpm_val = 0.0
-            key_val = ""
-            if tbpm and tbpm[0].text and tbpm[0].text[0].strip():
-                bpm_val = float(tbpm[0].text[0].strip())
-            if tkey and tkey[0].text and tkey[0].text[0].strip():
-                key_val = tkey[0].text[0].strip()
+            tags = TagFile.open(mp3)
+            bpm_raw = tags.get("bpm")
+            bpm_val = float(bpm_raw) if bpm_raw else 0.0
+            key_val = tags.get("key")
             if bpm_val > 0:
                 with_bpm.append((mp3, bpm_val, key_val))
         except Exception:

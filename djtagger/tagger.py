@@ -1,9 +1,7 @@
-"""ID3 tag reading / writing with mutagen."""
+"""Tag reading / writing for every supported format (via `tagfile.TagFile`)."""
 
 import os
 import re
-
-from mutagen.id3 import ID3, TXXX, TCON, TBPM, TKEY, COMM, TALB, TDRC, ID3NoHeaderError
 
 from .config import (
     GENERIC_GENRES,
@@ -13,6 +11,7 @@ from .config import (
     is_junk_genre,
     is_valid_year,
 )
+from .tagfile import TagFile
 
 # ─── Read helpers ───────────────────────────────────────────
 
@@ -20,31 +19,23 @@ from .config import (
 def is_already_tagged(filepath: str) -> bool:
     """Check if file already has our GENRE_SOURCE tag."""
     try:
-        tags = ID3(filepath)
-        for frame in tags.getall("TXXX"):
-            if frame.desc == "GENRE_SOURCE" and frame.text:
-                return True
+        return bool(TagFile.open(filepath).get_custom("GENRE_SOURCE"))
     except Exception:
-        pass
-    return False
+        return False
 
 
 def tagged_version(filepath: str) -> str:
     """Return the file's TAGGER_VERSION tag value, or "" if absent/unreadable."""
     try:
-        tags = ID3(filepath)
+        return TagFile.open(filepath).get_custom("TAGGER_VERSION").strip()
     except Exception:
         return ""
-    for frame in tags.getall("TXXX"):
-        if frame.desc == "TAGGER_VERSION" and frame.text:
-            return str(frame.text[0]).strip()
-    return ""
 
 
 def parse_filename(filepath: str) -> tuple[str, str, str]:
     """Parse artist, clean-artist, and title from filename.
 
-    Expects format: 'Artist - Title.mp3'
+    Expects format: 'Artist - Title.<ext>'
     Returns (artist, artist_clean, title).
     """
     basename = os.path.splitext(os.path.basename(filepath))[0]
@@ -107,30 +98,15 @@ def read_tags(filepath: str) -> dict:
         "emo": "",
     }
     try:
-        tags = ID3(filepath)
+        tags = TagFile.open(filepath)
     except Exception:
         return info
 
-    # TCON genre
-    tcon = tags.getall("TCON")
-    if tcon and tcon[0].text:
-        info["genre"] = tcon[0].text[0].strip()
+    # Standard fields (genre, BPM, key, album, year)
+    for field in ("genre", "bpm", "key", "album", "year"):
+        info[field] = tags.get(field)
 
-    # TBPM / TKEY (standard frames)
-    tbpm = tags.getall("TBPM")
-    if tbpm and tbpm[0].text:
-        info["bpm"] = tbpm[0].text[0].strip()
-    tkey = tags.getall("TKEY")
-    if tkey and tkey[0].text:
-        info["key"] = tkey[0].text[0].strip()
-    talb = tags.getall("TALB")
-    if talb and talb[0].text:
-        info["album"] = str(talb[0].text[0]).strip()
-    tdrc = tags.getall("TDRC")
-    if tdrc and tdrc[0].text:
-        info["year"] = str(tdrc[0].text[0]).strip()
-
-    # TXXX custom tags
+    # Custom tags
     tag_map = {
         "ENERGY": "energy",
         "VALENCE": "valence",
@@ -167,20 +143,15 @@ def read_tags(filepath: str) -> dict:
         "DRIVE": "drive",
         "EMO": "emo",
     }
-    for frame in tags.getall("TXXX"):
-        if frame.desc in tag_map:
-            info[tag_map[frame.desc]] = frame.text[0] if frame.text else ""
+    for name, key in tag_map.items():
+        info[key] = tags.get_custom(name)
 
     # Normalize role names written by older tagger versions (v6 "Warm-up").
     info["set_role"] = LEGACY_ROLES.get(info["set_role"], info["set_role"])
 
     # Comments
-    comm = tags.get("COMM::eng")
-    if comm:
-        info["comment"] = str(comm)
-    comm_dj = tags.get("COMM:djtagger:eng")
-    if comm_dj:
-        info["comment_detail"] = str(comm_dj)
+    info["comment"] = tags.get("comment")
+    info["comment_detail"] = tags.get("detail")
 
     return info
 
@@ -326,34 +297,24 @@ def write_tags(
     album: str = "",
     year: str = "",
 ) -> tuple[bool, str]:
-    """Write analysis results as ID3 tags.
+    """Write analysis results as tags (any supported format).
 
     Returns (success, genre_action_description).
 
-    *album* and *year* are optional — when passed, they are written to TALB /
-    TDRC respectively, but only if the existing frame is empty or looks like
+    *album* and *year* are optional. When passed, they are written to the
+    album / year fields respectively, but only if the existing frame is empty or looks like
     junk (URL/promo spam for album; non-year for year). Legitimate existing
     values are preserved.
     """
     try:
-        try:
-            tags = ID3(filepath)
-        except ID3NoHeaderError:
-            tags = ID3()
+        tags = TagFile.open(filepath)
 
         # Genre: only overwrite if existing is generic/empty/junk
-        existing_genre = ""
-        tcon = tags.getall("TCON")
-        if tcon and tcon[0].text:
-            existing_genre = tcon[0].text[0].strip()
+        existing_genre = tags.get("genre")
 
         # Existing GENRE_SOURCE — used by the merge logic to decide whether
         # this is a tier upgrade (weaker prior source → stronger new source).
-        existing_source = ""
-        for frame in tags.getall("TXXX"):
-            if frame.desc == "GENRE_SOURCE" and frame.text:
-                existing_source = frame.text[0].strip()
-                break
+        existing_source = tags.get_custom("GENRE_SOURCE").strip()
 
         if genre_list:
             new_genre, genre_action = _merge_genres(
@@ -363,8 +324,7 @@ def write_tags(
                 new_source=genre_source,
             )
             if new_genre != existing_genre:
-                tags.delall("TCON")
-                tags.add(TCON(encoding=3, text=[new_genre]))
+                tags.set("genre", new_genre)
         else:
             new_genre = existing_genre
             genre_action = "no genre"
@@ -377,13 +337,8 @@ def write_tags(
         # written rather than one fabricated from neutral values.
         # Existing role/detected genre, used to avoid erasing good data on a
         # run where analysis did not (re)produce them.
-        existing_role = ""
-        existing_detected = ""
-        for frame in tags.getall("TXXX"):
-            if frame.desc == "SET_ROLE" and frame.text:
-                existing_role = frame.text[0].strip()
-            elif frame.desc == "GENRE_DETECTED" and frame.text:
-                existing_detected = frame.text[0]
+        existing_role = tags.get_custom("SET_ROLE").strip()
+        existing_detected = tags.get_custom("GENRE_DETECTED")
 
         if result.get("arc_ok", True) and result.get("set_role", "") != "":
             from . import classify
@@ -403,7 +358,7 @@ def write_tags(
         # so the ML-detected audit trail is not blanked.
         detected_val = "; ".join(genre_list[:4]) if genre_list else existing_detected
 
-        # TXXX custom tags (only our namespaced keys)
+        # Custom tags (only our namespaced keys)
         for key, val in [
             ("ENERGY", result["energy"]),
             ("VALENCE", result["valence"]),
@@ -440,11 +395,10 @@ def write_tags(
             ("DRIVE", result.get("drive", 0.0)),
             ("EMO", result.get("emo", 0.0)),
         ]:
-            tags.delall(f"TXXX:{key}")
-            tags.add(TXXX(encoding=3, desc=key, text=[str(val)]))
+            tags.set_custom(key, str(val))
 
         # Remove retired tags from older versions
-        tags.delall("TXXX:MOOD_PARTY")
+        tags.delete_custom("MOOD_PARTY")
 
         # Comments
         comment, detail = _build_comment(
@@ -459,57 +413,41 @@ def write_tags(
             arc_level=result.get("arc_level", 0.0),
             arc_momentum=result.get("arc_momentum", 0.0),
         )
-        tags.delall("COMM::eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
-        tags.delall("COMM:djtagger:eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
+        tags.set("comment", comment)
+        tags.set("detail", detail)
 
         # BPM — only write if not already set
-        if result.get("bpm"):
-            existing_bpm = tags.getall("TBPM")
-            if not existing_bpm or not existing_bpm[0].text or not existing_bpm[0].text[0].strip():
-                tags.delall("TBPM")
-                tags.add(TBPM(encoding=3, text=[str(result["bpm"])]))
+        if result.get("bpm") and not tags.get("bpm"):
+            tags.set("bpm", str(result["bpm"]))
 
         # Key — only write if not already set
-        if result.get("key"):
-            existing_key = tags.getall("TKEY")
-            if not existing_key or not existing_key[0].text or not existing_key[0].text[0].strip():
-                tags.delall("TKEY")
-                tags.add(TKEY(encoding=3, text=[str(result["key"])]))
+        if result.get("key") and not tags.get("key"):
+            tags.set("key", str(result["key"]))
 
         # Album — fill if empty or replace if junk; never overwrite a legit value
         if album:
-            existing_album = ""
-            talb = tags.getall("TALB")
-            if talb and talb[0].text:
-                existing_album = str(talb[0].text[0]).strip()
+            existing_album = tags.get("album")
             if not existing_album or is_junk_album(existing_album):
-                tags.delall("TALB")
-                tags.add(TALB(encoding=3, text=[album]))
+                tags.set("album", album)
 
         # Year — fill if empty or replace if not a plausible year
         if year:
-            existing_year = ""
-            tdrc = tags.getall("TDRC")
-            if tdrc and tdrc[0].text:
-                existing_year = str(tdrc[0].text[0]).strip()
+            existing_year = tags.get("year")
             if not existing_year or not is_valid_year(existing_year):
-                tags.delall("TDRC")
-                tags.add(TDRC(encoding=3, text=[year]))
+                tags.set("year", year)
 
-        tags.save(filepath)
+        tags.save()
         return True, genre_action
     except Exception as ex:
         return False, f"error: {ex}"
 
 
-def _txxx_float(tags, desc, default=None):
-    """Read a TXXX float value, returning default if absent/blank/non-numeric."""
-    fr = tags.get(f"TXXX:{desc}")
-    if fr and fr.text and str(fr.text[0]).strip() != "":
+def _custom_float(tags: TagFile, name: str, default=None):
+    """Read a custom float tag, returning default if absent/blank/non-numeric."""
+    raw = tags.get_custom(name).strip()
+    if raw != "":
         try:
-            return float(fr.text[0])
+            return float(raw)
         except ValueError:
             return default
     return default
@@ -527,34 +465,30 @@ def rerole_file(filepath: str) -> tuple[str, str]:
     written), "unchanged", "skipped" (not a v7-analyzed file), or "error".
     """
     try:
-        tags = ID3(filepath)
+        tags = TagFile.open(filepath)
     except Exception:
         return "skipped", ""
 
-    lvl = _txxx_float(tags, "ARC_LEVEL")
-    drive = _txxx_float(tags, "DRIVE")
-    emo = _txxx_float(tags, "EMO")
+    lvl = _custom_float(tags, "ARC_LEVEL")
+    drive = _custom_float(tags, "DRIVE")
+    emo = _custom_float(tags, "EMO")
     if lvl is None or drive is None or emo is None:
         return "skipped", ""  # not analyzed by v7, nothing to re-decide from
 
-    genre = ""
-    tcon = tags.getall("TCON")
-    if tcon and tcon[0].text:
-        genre = str(tcon[0].text[0]).strip()
+    genre = tags.get("genre")
 
     from . import classify
     try:
         new_role = classify.decide_role(
             {"arc_level": lvl, "drive": drive, "emo": emo,
-             "sub_bass": _txxx_float(tags, "SUB_BASS", 0.0),
-             "drop_db": _txxx_float(tags, "DROP_DB", 0.0)},
+             "sub_bass": _custom_float(tags, "SUB_BASS", 0.0),
+             "drop_db": _custom_float(tags, "DROP_DB", 0.0)},
             genre,
         )
     except Exception:
         return "error", ""
 
-    role_fr = tags.get("TXXX:SET_ROLE")
-    stored = str(role_fr.text[0]).strip() if role_fr and role_fr.text else ""
+    stored = tags.get_custom("SET_ROLE").strip()
     if new_role == stored:
         return "unchanged", new_role  # raw frame already correct, keep it cheap
     # Note: when only the label changed (a legacy v6 name like "Warm-up" whose
@@ -562,90 +496,72 @@ def rerole_file(filepath: str) -> tuple[str, str]:
     # so the on-disk value matches the current vocabulary.
 
     try:
-        tags.delall("TXXX:SET_ROLE")
-        tags.add(TXXX(encoding=3, desc="SET_ROLE", text=[new_role]))
+        tags.set_custom("SET_ROLE", new_role)
         comment, detail = _build_comment(
-            energy=_txxx_float(tags, "ENERGY", 0.0),
-            valence=_txxx_float(tags, "VALENCE", 0.0),
+            energy=_custom_float(tags, "ENERGY", 0.0),
+            valence=_custom_float(tags, "VALENCE", 0.0),
             set_role=new_role,
-            danceability=_txxx_float(tags, "DANCEABILITY", 0.0),
-            peak_energy=_txxx_float(tags, "PEAK_ENERGY", 0.0),
-            arousal=_txxx_float(tags, "AROUSAL", 0.0),
-            aggressive=_txxx_float(tags, "MOOD_AGGRESSIVE", 0.0),
-            intro_energy=_txxx_float(tags, "INTRO_ENERGY", 0.0),
+            danceability=_custom_float(tags, "DANCEABILITY", 0.0),
+            peak_energy=_custom_float(tags, "PEAK_ENERGY", 0.0),
+            arousal=_custom_float(tags, "AROUSAL", 0.0),
+            aggressive=_custom_float(tags, "MOOD_AGGRESSIVE", 0.0),
+            intro_energy=_custom_float(tags, "INTRO_ENERGY", 0.0),
             arc_level=lvl,
-            arc_momentum=_txxx_float(tags, "ARC_MOMENTUM", 0.0),
+            arc_momentum=_custom_float(tags, "ARC_MOMENTUM", 0.0),
         )
-        tags.delall("COMM::eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
-        tags.delall("COMM:djtagger:eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
-        tags.save(filepath)
+        tags.set("comment", comment)
+        tags.set("detail", detail)
+        tags.save()
         return "reroled", new_role
     except Exception:
         return "error", ""
 
 
 def fix_comments(filepath: str) -> str:
-    """Re-write comments from existing TXXX energy/valence/danceability tags.
+    """Re-write comments from existing energy/valence/danceability tags.
 
     Returns "fixed" on success, "skipped" if file lacks djtagger tags,
     or "error" on read/write failure.
     """
     try:
-        tags = ID3(filepath)
+        tags = TagFile.open(filepath)
     except Exception:
         return "skipped"
 
     # Only fix files that have our tagger version tag
-    tv = tags.get("TXXX:TAGGER_VERSION")
-    if not tv:
+    if not tags.get_custom("TAGGER_VERSION"):
         return "skipped"
-    e_tag = tags.get("TXXX:ENERGY")
-    v_tag = tags.get("TXXX:VALENCE")
-    if not e_tag or not e_tag.text or not v_tag or not v_tag.text:
+    e_raw = tags.get_custom("ENERGY")
+    v_raw = tags.get_custom("VALENCE")
+    if not e_raw or not v_raw:
         return "skipped"
 
     try:
-        e = float(e_tag.text[0])
-        v = float(v_tag.text[0])
+        e = float(e_raw)
+        v = float(v_raw)
 
-        # Read v5 fields if present (graceful for v4 files)
-        d_tag = tags.get("TXXX:DANCEABILITY")
-        d = float(d_tag.text[0]) if d_tag and d_tag.text else 0.0
-        p_tag = tags.get("TXXX:PEAK_ENERGY")
-        p = float(p_tag.text[0]) if p_tag and p_tag.text else 0.0
-        a_tag = tags.get("TXXX:AROUSAL")
-        a = float(a_tag.text[0]) if a_tag and a_tag.text else 0.0
-        agg_tag = tags.get("TXXX:MOOD_AGGRESSIVE")
-        agg = float(agg_tag.text[0]) if agg_tag and agg_tag.text else 0.0
-        intro_tag = tags.get("TXXX:INTRO_ENERGY")
-        intro = float(intro_tag.text[0]) if intro_tag and intro_tag.text else 0.0
-
-        role_tag = tags.get("TXXX:SET_ROLE")
-        stored_role = role_tag.text[0] if role_tag and role_tag.text else ""
+        # v5+ fields default to 0.0 when absent (graceful for v4 files)
+        stored_role = tags.get_custom("SET_ROLE")
         # Translate role names from older versions (v6 "Warm-up" -> "Opener")
         # and persist the rename so the frame matches the current vocabulary.
         role = LEGACY_ROLES.get(stored_role, stored_role)
         if role != stored_role:
-            tags.delall("TXXX:SET_ROLE")
-            tags.add(TXXX(encoding=3, desc="SET_ROLE", text=[role]))
-        lvl_tag = tags.get("TXXX:ARC_LEVEL")
-        lvl = float(lvl_tag.text[0]) if lvl_tag and lvl_tag.text else 0.0
-        mom_tag = tags.get("TXXX:ARC_MOMENTUM")
-        mom = float(mom_tag.text[0]) if mom_tag and mom_tag.text else 0.0
+            tags.set_custom("SET_ROLE", role)
 
         comment, detail = _build_comment(
-            energy=e, valence=v, set_role=role, danceability=d, peak_energy=p,
-            arousal=a, aggressive=agg, intro_energy=intro, arc_level=lvl,
-            arc_momentum=mom,
+            energy=e, valence=v, set_role=role,
+            danceability=_custom_float(tags, "DANCEABILITY", 0.0),
+            peak_energy=_custom_float(tags, "PEAK_ENERGY", 0.0),
+            arousal=_custom_float(tags, "AROUSAL", 0.0),
+            aggressive=_custom_float(tags, "MOOD_AGGRESSIVE", 0.0),
+            intro_energy=_custom_float(tags, "INTRO_ENERGY", 0.0),
+            arc_level=_custom_float(tags, "ARC_LEVEL", 0.0),
+            arc_momentum=_custom_float(tags, "ARC_MOMENTUM", 0.0),
         )
 
-        tags.delall("COMM::eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
-        tags.delall("COMM:djtagger:eng")
-        tags.add(COMM(encoding=3, lang="eng", desc="djtagger", text=detail))
-        tags.save(filepath)
+        tags.set("comment", comment)
+        tags.set("detail", detail)
+        tags.save()
         return "fixed"
     except Exception:
         return "error"
@@ -657,32 +573,25 @@ def clean_junk_genre(filepath: str) -> tuple[bool, str]:
     Returns (changed, description). changed=True if genre was cleaned.
     """
     try:
-        tags = ID3(filepath)
+        tags = TagFile.open(filepath)
     except Exception:
         return False, "no tags"
 
-    tcon = tags.getall("TCON")
-    if not tcon or not tcon[0].text:
+    existing = tags.get("genre")
+    if not existing:
         return False, "no genre"
-
-    existing = tcon[0].text[0].strip()
     if not is_junk_genre(existing):
         return False, "ok"
 
     # Try to use GENRE_DETECTED as replacement
-    detected = ""
-    for frame in tags.getall("TXXX"):
-        if frame.desc == "GENRE_DETECTED" and frame.text:
-            detected = frame.text[0].strip()
-            break
+    detected = tags.get_custom("GENRE_DETECTED").strip()
 
     if detected and not is_junk_genre(detected):
-        tags.delall("TCON")
-        tags.add(TCON(encoding=3, text=[detected]))
-        tags.save(filepath)
+        tags.set("genre", detected)
+        tags.save()
         return True, f"replaced '{existing}' → '{detected}'"
     else:
         # No good replacement — just clear the junk
-        tags.delall("TCON")
-        tags.save(filepath)
+        tags.delete("genre")
+        tags.save()
         return True, f"cleared '{existing}'"

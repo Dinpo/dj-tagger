@@ -2,7 +2,7 @@
 
 **Autonomous DJ music tagger powered by machine learning.**
 
-Analyzes MP3 files using [Essentia](https://essentia.upf.edu/) TensorFlow models and enriches them with genre, energy, and mood metadata — written directly as ID3 tags. Genre detection combines three sources in priority order: Beatport (human-curated, track-level), Last.fm (artist tags), and local ML predictions. Beatport also fills empty album / year fields when a match is found.
+Analyzes audio files (MP3, FLAC, M4A/ALAC, AIFF, WAV, Ogg Vorbis) using [Essentia](https://essentia.upf.edu/) TensorFlow models and enriches them with genre, energy, and mood metadata, written directly into each file's own tags (ID3, Vorbis comments, or MP4 atoms). Genre detection combines three sources in priority order: Beatport (human-curated, track-level), Last.fm (artist tags), and local ML predictions. Beatport also fills empty album / year fields when a match is found.
 
 Designed to run unattended on large collections. No LLM calls, no cloud APIs for audio — everything runs locally except lightweight genre lookups.
 
@@ -29,7 +29,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
   - [Set Role](#set-role)
   - [3-Tier Genre Resolution](#3-tier-genre-resolution)
   - [Remix-Aware Matching](#remix-aware-matching)
-- [ID3 Tags Written](#id3-tags-written)
+- [Tags Written](#tags-written)
   - [Genre Resolution Rules](#genre-resolution-rules)
   - [Comment Format](#comment-format)
 - [Configuration](#configuration)
@@ -49,6 +49,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 ## Features
 
 - **ML audio analysis** — Energy, valence, and 4 mood dimensions per track
+- **Multi-format:** MP3, FLAC, M4A (AAC/ALAC), AIFF, WAV and Ogg Vorbis, each tagged in its native format
 - **3-tier genre resolution** — Beatport → Last.fm → Essentia ML fallback
 - **Album + year** — filled from Beatport; empty / junk values (URL spam, non-year) are replaced, legit values preserved
 - **Remix-aware matching** — Scores Beatport results to find the right version
@@ -69,7 +70,7 @@ Designed to run unattended on large collections. No LLM calls, no cloud APIs for
 | Package | Purpose |
 |---------|---------|
 | [essentia-tensorflow](https://essentia.upf.edu/) | Audio loading, embedding extraction, ML inference |
-| [mutagen](https://mutagen.readthedocs.io/) | ID3 tag reading and writing |
+| [mutagen](https://mutagen.readthedocs.io/) | Tag reading and writing (ID3, Vorbis comments, MP4) |
 | [numpy](https://numpy.org/) | Numerical operations on model outputs |
 | [typer](https://typer.tiangolo.com/) >= 0.9 | CLI framework |
 | [rich](https://rich.readthedocs.io/) >= 13.0 | Terminal formatting, progress bars, tables |
@@ -403,7 +404,7 @@ The ` - ` separator (space-dash-space) splits artist from title. If no separator
 | `Chase & Status (UK) - Blind Faith.mp3` | `Chase & Status` (cleaned) | `Blind Faith` |
 | `Unknown Track.mp3` | *(empty)* | `Unknown Track` |
 
-> **Note:** DJ Tagger only processes `.mp3` files. Other formats (FLAC, WAV, AAC, etc.) are silently skipped during scanning.
+> **Supported formats:** `.mp3`, `.flac`, `.m4a`, `.aif` / `.aiff`, `.wav` and `.ogg` (extensions matched case-insensitively). Other files, including `.mp4` (usually video in a music folder) and macOS `._*` resource files, are skipped during scanning.
 
 ## How It Works
 
@@ -415,7 +416,7 @@ The ` - ` separator (space-dash-space) splits artist from title. If no separator
 4. **Mood prediction** — Embeddings feed into 4 independent mood classification heads (happy, sad, aggressive, relaxed), each producing a score from 0 to 1
 5. **Composite metrics** — Energy and valence are derived from the mood scores (see formulas below)
 6. **Genre resolution** — The 3-tier lookup (Beatport → Last.fm → ML) determines the final genre
-7. **Tag writing** — Results are written as ID3 tags, preserving all existing non-DJ-Tagger tags
+7. **Tag writing:** Results are written in the file's native tag format (see [Tags Written](#tags-written)), preserving all existing non-DJ-Tagger tags
 
 ### Energy and Valence Formulas
 
@@ -489,7 +490,20 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 
 **Recognized mix patterns:** remix, mix, edit, dub, rework, bootleg, version, VIP.
 
-## ID3 Tags Written
+## Tags Written
+
+The table lists the ID3 frames (MP3, and the ID3 chunk inside AIFF / WAV). FLAC, Ogg and M4A carry the same values under their own field names:
+
+| Field | ID3 (MP3 / AIFF / WAV) | Vorbis comments (FLAC / Ogg) | MP4 atoms (M4A) |
+|-------|------------------------|------------------------------|-----------------|
+| Genre | `TCON` | `GENRE` | `©gen` |
+| BPM / key (read; written only with `--detect-bpm-key`) | `TBPM` / `TKEY` | `BPM` / `INITIALKEY` | `tmpo` / `----:com.apple.iTunes:initialkey` |
+| Album / year | `TALB` / `TDRC` | `ALBUM` / `DATE` | `©alb` / `©day` |
+| Comment (visible) | `COMM::eng` | `COMMENT` (also `DESCRIPTION` when it mirrors the comment) | `©cmt` |
+| Comment (detail) | `COMM:djtagger:eng` | `DJTAGGER_DETAIL` | `----:com.apple.iTunes:DJTAGGER_DETAIL` |
+| Our analysis fields, e.g. `SET_ROLE` | `TXXX:SET_ROLE` | `DJTAGGER_SET_ROLE` | `----:com.apple.iTunes:DJTAGGER_SET_ROLE` |
+
+Outside ID3 our analysis fields carry a `DJTAGGER_` prefix. Vorbis field names are case-insensitive and Mixed In Key already stores its own data under `energy` and `key` in FLAC files, so a plain `ENERGY` field would overwrite it. AIFF / WAV files keep the ID3 version they already have (Serato often writes v2.3).
 
 | Tag | Frame | Content | Notes |
 |-----|-------|---------|-------|
@@ -530,7 +544,7 @@ If the best Beatport match scores below 10 for a specific remix, Beatport is ski
 | Comment | `COMM::eng` | `Role: Builder \| Energy: Mid \| Mood: Neutral \| Edge: Soft \| Peak: 0.95 \| Intro: Mid` | Human-readable, visible in Serato/rekordbox |
 | Comment (detail) | `COMM:djtagger:eng` | `E:0.81 \| V:0.34 \| Agg:0.55 \| Peak:0.92 \| Intro:0.78 \| D:0.89 \| Arousal:0.77` | Hidden reference with raw values |
 
-All other existing ID3 frames (BPM, key, Serato cues, artwork, etc.) are left untouched.
+All other existing tags (BPM, key, Serato cues and analysis, Mixed In Key data, artwork, etc.) are left untouched, in every format.
 
 ### Genre Resolution Rules
 
@@ -668,27 +682,28 @@ djtagger/
 ├── classify.py       # Set-role model: drive/emo indices, energy bands, genre-relative bands, decide_role. NO Essentia, unit-tested
 ├── genres.py         # Beatport scraping, Last.fm API, remix scoring, genre resolution
 ├── library.py        # Shared library scanning: reads all tracks into structured records
-├── scanner.py        # Recursive MP3 discovery, resume filtering, version-aware upgrade filtering
-└── tagger.py         # ID3 tag reading/writing via mutagen; role decision; filename parsing
+├── scanner.py        # Recursive audio-file discovery, resume filtering, version-aware upgrade filtering
+├── tagfile.py        # Format-neutral tag access (ID3 / Vorbis / MP4) behind one TagFile API
+└── tagger.py         # Tag reading/writing via TagFile; role decision; filename parsing
 ```
 
 **Data flow for the `tag` command:**
 
 ```
-scanner.find_mp3s()          → list of MP3 paths (sorted alphabetically by directory/file)
+scanner.find_audio_files()   → list of audio paths (sorted alphabetically by directory/file)
   ↓
 scanner.filter_untagged()    → remove already-tagged files (or filter_outdated for --upgrade)
   ↓
 analyzer.load_models()       → load the TensorFlow models into memory once
   ↓
-  For each MP3:
+  For each file:
     tagger.parse_filename()  → extract artist + title from filename
     analyzer.analyze_track() → ML embeddings → genre/mood/danceability/vocal + energy
       └─ classify.compute_arc() → dsp features + drive/emo + provisional (global-band) role
     genres.resolve_metadata() → Beatport → Last.fm → ML fallback (skipped in --upgrade if genre exists)
     tagger.write_tags()      → SINGLE role decision point: classify.decide_role() using the
                                genre actually written (genre-relative when genre-stats exists),
-                               then write ID3 tags, preserving existing data
+                               then write tags (via tagfile.TagFile), preserving existing data
 ```
 
 **Set-role tuning is decoupled from analysis.** The role decision reads only
@@ -719,7 +734,7 @@ seconds without touching audio. See [Set Role](#set-role).
 
 **Re-tagging.** By default, already-tagged files are skipped. Use `--force` to re-analyze and re-tag everything (but see the caution in the flags table: prefer `--upgrade` to backfill new fields, or `--retag-source ml` to re-resolve ML genres). Use `--fix-comments` to only regenerate comments from existing energy/valence values (no ML re-analysis needed).
 
-**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `.venv/bin/python scripts/verify_library.py /path/to/music`. It reads every file (including `.MP3` / `.Mp3`) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
+**Is everything properly tagged?** A "skipped (already tagged)" count only means a file has a `GENRE_SOURCE` frame; it does not prove the file is complete or on the current tagger version. To check for real, run `.venv/bin/python scripts/verify_library.py /path/to/music`. It reads every supported audio file (extensions matched case-insensitively) and reports tracks with a stale version, missing role / PULSE_REG / energy / genre source, a junk or wide ML genre, or a comment without the role. It exits 1 if any track has an issue.
 
 **Serato cue markers.** `scripts/serato_cues.py` reads the cue points Serato stores in each file (the `Serato Markers2` frame), e.g. to compare ENTRY / EXIT markers against detection experiments. `--scan <dir>` summarizes a folder.
 

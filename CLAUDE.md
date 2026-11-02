@@ -6,16 +6,16 @@ non-obvious decisions and gotchas.
 
 ## What it is
 
-A local CLI that analyzes MP3s with Essentia TensorFlow models and writes
-ID3 tags: genre (Beatport → Last.fm → ML), energy, valence, moods, and a
+A local CLI that analyzes audio files (MP3, FLAC, M4A, AIFF, WAV, Ogg) with
+Essentia TensorFlow models and writes tags: genre (Beatport → Last.fm → ML), energy, valence, moods, and a
 **DJ set role**. Runs unattended over large libraries (~3,700 tracks here).
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 61, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 85, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
-  auto-memory). Filenames follow `Artist - Title.mp3`.
+  auto-memory). Filenames follow `Artist - Title.<ext>`.
 
 ## Module map
 
@@ -26,9 +26,10 @@ No cloud APIs for audio; only lightweight genre lookups hit the network.
 | `dsp.py` | Pure-numpy audio features. NO Essentia. Shared framing/FFT via `_frames`/`_magnitude_spectra` |
 | `classify.py` | Set-role model. `compute_arc()`, `drive_emo()`, `classify_role()`, `decide_role()`, genre-stats helpers. NO Essentia |
 | `config.py` | Constants incl. `FEATURE_RANGE`, `ROLE_THRESHOLDS`, `TAGGER_VERSION`, `LEGACY_ROLES`, `GENRE_STATS_FILE` |
-| `tagger.py` | ID3 read/write; `write_tags()` is the single role-decision point; `rerole_file()`; `fix_comments()` |
+| `tagfile.py` | Format-neutral tag access: `TagFile.open(path)` → ID3 (mp3/aif/wav), Vorbis (flac/ogg) or MP4 (m4a) backend; `AUDIO_EXTS`. The ONLY module that touches native frames |
+| `tagger.py` | Tag read/write via `TagFile`; `write_tags()` is the single role-decision point; `rerole_file()`; `fix_comments()` |
 | `genres.py` | Beatport scrape, Last.fm, remix-aware match scoring |
-| `scanner.py` | MP3 discovery; `filter_untagged` (resume), `filter_outdated` (--upgrade) |
+| `scanner.py` | Audio discovery (`find_audio_files`); `filter_untagged` (resume), `filter_outdated` (--upgrade), `filter_by_source` |
 | `library.py` | Reads all tracks into structured records for stats/find/export/suggest |
 
 ## The set-role model (v7): the active work
@@ -145,6 +146,26 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
   reboot, so keep long-run logs in the repo or scratchpad and re-verify from
   tags. `scripts/serato_cues.py` reads Serato cue markers (ground truth for
   any future ENTRY/EXIT work).
+- **Multi-format (2026-11-02, GitHub issue #1).** All tag access goes
+  through `tagfile.TagFile` (standard fields: genre/bpm/key/album/year/
+  comment/detail; custom fields: our analysis names). Do not import
+  `mutagen.id3` frames elsewhere. Key decisions:
+  - MP3 output is byte-for-byte the same frames as before the refactor
+    (verified by snapshotting write/rerole/fix-comments/clean-genre output on
+    real files before and after), so no TAGGER_VERSION bump was needed.
+  - Outside ID3, custom fields are `DJTAGGER_<NAME>` (Vorbis) and
+    `----:com.apple.iTunes:DJTAGGER_<NAME>` (MP4). Reason: Vorbis keys are
+    case-insensitive and Mixed In Key stores base64 blobs under `energy` and
+    `key` in FLAC; a bare `ENERGY` would destroy them. FLAC key is read from
+    `INITIALKEY` for the same reason.
+  - FLAC `DESCRIPTION` is updated only when it mirrors `COMMENT` (MIK writes
+    both); a different DESCRIPTION is left alone.
+  - AIFF/WAV keep their existing ID3 version (v2.3 stays v2.3).
+  - `.mp4` is excluded (video in music folders); `._*` AppleDouble files are
+    skipped. Fixtures for every format live in `tests/fixtures/silent.*`
+    (generated with ffmpeg; Ogg via `-c:a vorbis -strict -2`).
+  - Essentia `MonoLoader` decodes every format via FFmpeg; no analyzer
+    change was needed.
 - **Performance.** `compute_arc` shares framing/FFT across features; the
   segment loop slices stored per-frame predictions instead of re-running
   models per segment. Wall-clock is ~3.4s/track dominated by the EffNet
@@ -173,7 +194,9 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   prior genre. Apply resolver changes with `tag --retag-source ml`.
 - **Verifying "properly tagged":** the resume check only looks for
   GENRE_SOURCE, so it does not prove completeness. Run
-  `scripts/verify_library.py` (last run 2026-10-26: 3,690/3,690 OK).
+  `scripts/verify_library.py` (last run 2026-10-26: 3,690/3,690 MP3s OK;
+  that run predates multi-format, and `_DJ Music` also holds ~33 FLAC/M4A/
+  AIFF/WAV tracks that were never tagged).
 - **Pending, user-driven:** grading roles by ear, then tune
   `ROLE_THRESHOLDS` / `FEATURE_RANGE` and `rerole`. Parked: hypnotic-groove
   detection and ENTRY/EXIT cue detection (both need more labels; see notes).

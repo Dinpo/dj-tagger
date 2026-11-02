@@ -13,7 +13,8 @@ Exit code 0 when every track passes, 1 when any track has issues.
 Checks per track: current TAGGER_VERSION, a valid set role, PULSE_REG and
 ENERGY present, GENRE_SOURCE present, a non-junk genre, no wide ML genre mix
 (4+ genres from source "ml"), and a Serato comment that leads with "Role:".
-Files are found with the tagger's own scanner, so `.MP3` / `.Mp3` count too.
+Files are found with the tagger's own scanner: every supported format
+(MP3, FLAC, M4A, AIFF, WAV, Ogg), extensions matched case-insensitively.
 """
 
 import os
@@ -21,7 +22,7 @@ import sys
 from collections import Counter
 
 from djtagger.config import TAGGER_VERSION, is_junk_genre
-from djtagger.scanner import find_mp3s
+from djtagger.scanner import find_audio_files
 from djtagger.tagger import read_tags
 
 ROLES = {"Opener", "Builder", "Peak", "Closer"}
@@ -57,7 +58,7 @@ def main() -> int:
         print(__doc__)
         return 2
     root = sys.argv[1]
-    files = find_mp3s(root)
+    files = find_audio_files(root)
     problems: Counter = Counter()
     examples: dict[str, list[str]] = {}
     ok = 0
