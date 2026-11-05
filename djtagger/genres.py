@@ -12,7 +12,10 @@ from curl_cffi.requests.errors import RequestsError as _CffiRequestsError
 
 from .config import (
     BEATPORT_TIMEOUT,
+    ELECTRONIC_GENRE_WORDS,
     LASTFM_API_KEY,
+    LASTFM_GENERIC_TAGS,
+    LASTFM_GENRE_WORDS,
     LASTFM_TIMEOUT,
     LASTFM_URL,
     LASTFM_MIN_COUNT,
@@ -380,11 +383,51 @@ def get_beatport_genre(artist: str, title: str) -> list[str]:
 # ─── Last.fm lookup ─────────────────────────────────────────
 
 
+_DERIVATIVE_RE = re.compile(r"\b(?:remix|rmx|bootleg|mashup|rework|cover|tribute)\b", re.IGNORECASE)
+
+
+def _tag_words(tag: str) -> set[str]:
+    return set(re.split(r"[\s\-/&]+", tag.lower().strip()))
+
+
+def _is_genre_tag(tag: str) -> bool:
+    """Whether a free-text Last.fm tag looks like a genre (see LASTFM_GENRE_WORDS)."""
+    t = tag.lower().strip()
+    if "_" in t or re.search(r"\d", t):  # "80s", "funk_add_to_lidarr_batch_10"
+        return False
+    return t in LASTFM_GENRE_WORDS or bool(_tag_words(t) & LASTFM_GENRE_WORDS)
+
+
+def _is_remix(title: str) -> bool:
+    """Whether the track is someone's reworking of another artist's song.
+
+    "Original Mix" / "Extended Mix" do not count; a named mix does.
+    """
+    _, _, mix_info = _extract_mix_info(title)
+    if mix_info and not _is_generic_mix(mix_info):
+        return True
+    return bool(_DERIVATIVE_RE.search(title))
+
+
+def _usable_lastfm(fm_genres: list[str], ml_list: list[str]) -> list[str]:
+    """Keep the Last.fm tags that can be trusted for this track.
+
+    Last.fm describes the artist, the audio models describe the file. Generic
+    tags add nothing, and when the audio says electronic, a tag that does not
+    (Metal, Rap, Indie Pop) is the wrong artist or a side project, not news
+    about this track.
+    """
+    usable = [g for g in fm_genres if g.lower() not in LASTFM_GENERIC_TAGS]
+    if any(_tag_words(g) & ELECTRONIC_GENRE_WORDS for g in ml_list):
+        usable = [g for g in usable if _tag_words(g) & ELECTRONIC_GENRE_WORDS]
+    return usable
+
+
 def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
     """Look up genre tags on Last.fm via artist.getTopTags API.
 
     Tries cleaned artist name first, then raw.
-    Returns up to 3 genre names.
+    Returns up to 3 genre names; tags that are not genres are dropped.
     """
     global _lastfm_warned
     if not LASTFM_API_KEY:
@@ -418,9 +461,10 @@ def get_lastfm_genre(artist: str, artist_clean: str, title: str) -> list[str]:
                 if isinstance(tags, list):
                     genres = [
                         t["name"].title()
-                        for t in tags[:3]
+                        for t in tags
                         if int(t.get("count", 0)) > LASTFM_MIN_COUNT
-                    ]
+                        and _is_genre_tag(t["name"])
+                    ][:3]
                     if genres:
                         break
         except Exception:
@@ -457,8 +501,10 @@ def resolve_metadata(
     if bp_genres:
         return {"genres": bp_genres, "source": "beatport", "album": album, "year": year}
 
-    # Last.fm (artist-level) + ML fallback
-    fm_genres = get_lastfm_genre(artist, artist_clean, title)
+    # Last.fm (artist-level) + ML fallback. Skipped for remixes: Last.fm's tags
+    # describe the original artist, so "Enter Sandman (Some House Remix)" would
+    # come back Thrash Metal. The audio models hear the file itself.
+    fm_genres = [] if _is_remix(title) else get_lastfm_genre(artist, artist_clean, title)
     ml_list = [g[0] for g in ml_genres[:3] if g[1] >= genre_keep_prob]
 
     # Prefer electronic sub-genre labels only when the electronic head is both
@@ -478,6 +524,7 @@ def resolve_metadata(
             ml_list = elec_list + [g for g in ml_list if g.lower() not in
                                    [e.lower() for e in elec_list]]
 
+    fm_genres = _usable_lastfm(fm_genres, ml_list)
     if fm_genres:
         final = fm_genres[:]
         for g in ml_list:

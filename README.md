@@ -145,7 +145,7 @@ The first command that needs the models (`tag`) offers to set up, then continues
 
 1. **Downloads the models** into `~/.local/essentia-models/` (skips files already there).
 2. **Asks for your music folder** (optional). Commands then use it when you leave the path off. Without a saved folder, commands ask you to name one; they never act on the current directory by accident.
-3. **Asks for a Last.fm API key** (optional, [free here](https://www.last.fm/api/account/create)). It improves genres for tracks Beatport does not have.
+3. **Asks for a Last.fm API key** (optional, [free here](https://www.last.fm/api/account/create)). It adds a second opinion on genre for original tracks Beatport does not have; it is deliberately not used for remixes.
 
 Answers are saved to `~/.config/djtagger/config.json` (readable only by you, since it can hold the API key). Run `djtagger setup` again to change them, or `djtagger setup --force` to re-download the models. In scripts and other non-interactive use nothing prompts: a missing model stops with "run `djtagger setup`", and the environment variables below override the file.
 
@@ -502,7 +502,7 @@ Genre detection tries three sources in priority order, stopping at the first hit
 
 **Beatport** results are scored and the best match is selected (see [Remix-Aware Matching](#remix-aware-matching)). Results are cached in a bounded LRU cache (500 entries) to reduce repeat lookups.
 
-**Last.fm** uses the `artist.getTopTags` endpoint. Only tags with a play count above a minimum threshold (default 20) are kept. The cleaned artist name is tried first, then the raw artist name. When Last.fm succeeds, its genres are merged with ML predictions (Last.fm genres first, then ML genres not already in the list).
+**Last.fm** uses the `artist.getTopTags` endpoint, whose tags are free text and describe the artist, not the track. So it is used cautiously: only tags with a weight above a minimum (default 20, where the top tag is 100) that look like genres are kept (`female vocalists`, `british`, `80s` are dropped); it is skipped entirely for remixes, because the tags would describe the original artist (`Enter Sandman (House Remix)` is not Thrash Metal); generic tags like `Electronic` and `Dance` add nothing; and when the audio models say a track is electronic, non-electronic tags are ignored. The cleaned artist name is tried first, then the raw artist name. When Last.fm succeeds, its genres are merged with ML predictions (Last.fm genres first, then ML genres not already in the list).
 
 **ML fallback** uses genres from the Discogs-EffNet model where the predicted probability exceeds the keep threshold (default 0.10). Genre labels follow the Discogs taxonomy (e.g., `Electronic---Drum n Bass`) and are cleaned to use only the sub-genre portion (e.g., `Drum n Bass`). The separate 5-class electronic-genre head (ambient / dnb / house / techno / trance, so chance is 0.20) is only allowed to lead when it is **confident and dominant** (top probability >= 0.40 and at least 0.10 above the runner-up); when its distribution is flat (the model is uncertain), it is ignored so its guesses don't get prepended ahead of the coherent Discogs labels. This prevents the incoherent wide mixes (e.g. `ambient; house; dnb; ...`) that a flat electronic head otherwise produced on ML-only tracks.
 
@@ -652,7 +652,7 @@ These are compile-time constants in `config.py`:
 |----------|---------|-------------|
 | `GENRE_MIN_PROB` | `0.05` | Minimum predicted probability for an ML genre to be considered at all |
 | `GENRE_KEEP_PROB` | `0.10` | Minimum probability for an ML genre to appear in the final tag list |
-| `LASTFM_MIN_COUNT` | `20` | Minimum Last.fm tag play count to consider a genre valid |
+| `LASTFM_MIN_COUNT` | `20` | Minimum Last.fm tag weight (top tag = 100) to consider a genre valid |
 
 ### Network Timeouts
 

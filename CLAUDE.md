@@ -12,7 +12,7 @@ Essentia TensorFlow models and writes tags: genre (Beatport → Last.fm → ML),
 No cloud APIs for audio; only lightweight genre lookups hit the network.
 
 - Python >= 3.10. Entry point: `djtagger.cli:app` (Typer). Venv at `.venv`.
-- Tests: `.venv/bin/pytest` (currently 115, all green). `dsp.py` and
+- Tests: `.venv/bin/pytest` (currently 122, all green). `dsp.py` and
   `classify.py` are pure numpy (no Essentia import) so they test without models.
 - Target library: `/Volumes/Multimedia/Music/_DJ Music` (see the user's
   auto-memory). Filenames follow `Artist - Title.<ext>`.
@@ -137,6 +137,14 @@ To recalibrate, sample the library, take each feature's p10/p90, and update
     transiently, the ML fallback gets merged into curated Beatport genres.
     Use `--upgrade` (keeps genres, no network) or `--retag-source ml` (only
     touches ml-source tracks, and can upgrade them to Beatport).
+- **Last.fm is deliberately restricted (2026-11-02).** Tags describe the
+  artist, so on a remix-heavy DJ library they are often wrong for the file
+  (Metallica remix -> Thrash Metal, Tiesto remix of John Legend -> Soul).
+  `resolve_metadata` skips Last.fm for remixes (`_is_remix`), `_is_genre_tag`
+  keeps only genre-shaped tags (allowlist of words, so junk fails closed), and
+  `_usable_lastfm` drops generic tags and, when the ML genres are electronic,
+  non-electronic ones. A dry run on 393 ML-only tracks changed only 26, about
+  half of those a mere reorder, so the library was NOT re-tagged with it.
 - **Verify by reading tags, not run summaries.** `djtagger verify <lib>`
   reads every audio file (all formats, via `find_audio_files`) and checks
   version, role, PULSE_REG, energy, genre source, junk/wide genre, the
@@ -246,9 +254,12 @@ messages, docs). Use a period, comma, colon, parentheses, or `..` instead.
   prior genre. Apply resolver changes with `tag --retag-source ml`.
 - **Verifying "properly tagged":** the resume check only looks for
   GENRE_SOURCE, so it does not prove completeness. Run
-  `djtagger verify` (last run 2026-11-02, all formats: 3,723
-  tracks, 3,722 clean; the one flag is a coherent 4-genre house list on an
-  ML-only M4A, a false positive of the "4+ ML genres" heuristic).
+  `djtagger verify` (last run 2026-11-02, all formats: 3,723/3,723 clean,
+  after the comment restore and a `--retag-source ml` refresh).
+- **Comment restore (2026-11-02, one-off).** 3,508 tracks got their original
+  comment back after the summary (from `COMM:ID3v1 Comment:eng`, capped at 29
+  chars). Undo data: `~/.local/share/djtagger/comment-restore-backup-2026-11-02.json`
+  and `pre-genre-refresh-2026-11-02.json` next to it.
 - **Pending, user-driven:** grading roles by ear, then tune
   `ROLE_THRESHOLDS` / `FEATURE_RANGE` and `rerole`. Parked: hypnotic-groove
   detection and ENTRY/EXIT cue detection (both need more labels; see notes).

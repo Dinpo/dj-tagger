@@ -196,7 +196,32 @@ SOCKET_TIMEOUT = 10    # global socket default
 
 GENRE_MIN_PROB = 0.05   # minimum probability for ML genre
 GENRE_KEEP_PROB = 0.10  # threshold for inclusion in final list
-LASTFM_MIN_COUNT = 20   # minimum tag count for Last.fm genres
+LASTFM_MIN_COUNT = 20   # minimum tag weight (top tag = 100) for Last.fm genres
+
+# Last.fm tags are free text: "female vocalists", "british", "80s", "seen
+# live". A tag only counts as a genre if it contains one of these words, so
+# unknown junk is dropped by default (no list of countries to maintain).
+LASTFM_GENRE_WORDS = frozenset("""
+    alternative ambient amapiano afrobeat afrobeats bass blues breakbeat breaks
+    chillout chillwave classical country dance dancehall disco downtempo drum
+    dub dubstep edm electro electroclash electronic electronica electropop
+    eurobeat eurodance folk funk garage gospel grunge hardcore hardstyle hop
+    house idm indie jazz jungle latin metal minimal pop punk r&b rap reggae
+    reggaeton rnb rock schranz ska soul soundtrack synthpop synthwave
+    techno trance trap wave
+""".split())
+
+# Too broad to say anything about a track in a DJ library.
+LASTFM_GENERIC_TAGS = frozenset({"electronic", "electronica", "dance", "pop", "rock", "edm", "club"})
+
+# Words that mark a genre as electronic, to spot a Last.fm tag that contradicts
+# what the audio says (see genres._usable_lastfm).
+ELECTRONIC_GENRE_WORDS = frozenset("""
+    ambient bass bassline breakbeat breaks chillout chillwave disco downtempo
+    drum dub dubstep edm electro electroclash electronic electronica electropop
+    eurodance garage glitch grime hardstyle house idm jungle minimal schranz
+    synthpop synthwave techno trance
+""".split())
 
 # ─── Energy Formula Weights ────────────────────────────────
 
